@@ -1,0 +1,71 @@
+h1 {
+  font-size: 16px;
+  font-weight: 500;
+  color: lightgray;
+  margin-right: 10px;
+  font-weight: 600;
+}
+
+
+.lucide-user-round {
+  stroke: white;
+}
+
+.header {
+  justify-content: space-between;
+  padding: 5px 20px;
+  border-bottom: 1px solid #44454a;
+  border-top: 1px solid #44454a;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.header .left {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.lucide-message-circle-plus {
+  stroke: white;
+}
+
+.friend-search-bar {
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  background-color: #2f3136;
+  color: white;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #44454a;
+  border-radius: 5px;
+  width: 90%;
+  margin: 10px auto;
+  padding: 10px 15px;
+  justify-content: flex-start;
+}
+
+.friend-search-bar::placeholder {
+  color: gray;
+}
+
+.friend-search-bar:focus-within {
+  border: 1px solid #5865f2;
+
+}
+
+.friend-search-bar input {
+  background: none;
+  outline: none;
+  border: none;
+  width: 100%;
+  height: 100%;
+  color: lightgray;
+  margin-left: 10px;
+  font-size: 15px;
+}
