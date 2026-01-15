@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import "../../styles/friend-sidebar.css"
 import { Plus } from "lucide-react";
 
@@ -16,11 +16,11 @@ interface FriendEntryProps {
 
 function FriendEntry({ friend, selected, onclick }: FriendEntryProps) {
   return (
-    <button className={`friend-entry ${selected ? "selected" : ""}`
+    <div className={`friend-entry ${selected ? "selected" : ""}`
     } onClick={onclick} >
       <img src={friend.pp} alt={`${friend.name}'s profile picture`} className="friend-pp" />
       <span className="friend-name">{friend.name}</span>
-    </button >
+    </div >
   )
 }
 

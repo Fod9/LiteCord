@@ -1,6 +1,6 @@
 import { useState } from "react"
 
-import "../../styles/sidebar.css"
+import "../../styles/server-sidebar.css"
 
 interface SideBarButtonProps {
   icon: React.ReactNode
