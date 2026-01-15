@@ -3,6 +3,7 @@ import { updateTitle } from "../utils/windows-helper";
 
 import "../styles/friends.css";
 import FriendSearchBar from "../components/friends/FriendSearchBar";
+import FriendList from "../components/friends/FriendList";
 
 export default function FriendPage() {
   updateTitle('Amis - LiteCord');
@@ -11,6 +12,7 @@ export default function FriendPage() {
     <div className="content">
       <FriendHeader />
       <FriendSearchBar />
+      <FriendList filter="En ligne" />
     </div>
   )
 }

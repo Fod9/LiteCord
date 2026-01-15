@@ -69,3 +69,10 @@ h1 {
   margin-left: 10px;
   font-size: 15px;
 }
+
+.filter-text {
+  color: lightgray;
+  font-size: 14px;
+  margin-left: 20px;
+  margin-bottom: 5px;
+}

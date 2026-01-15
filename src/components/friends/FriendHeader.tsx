@@ -18,7 +18,7 @@ export default function FriendHeader() {
           <button className={`action-button ${selectedButton == "online" ? "selected" : ""}`} onClick={
             () => setSelectedButton('online')
           }>En ligne</button>
-          <button className="action-button cta">Ajouter un ami</button>
+          <button className="action-button cta">Ajouter</button>
         </div>
       </div>
       <MessageCirclePlus />
