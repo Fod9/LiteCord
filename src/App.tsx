@@ -9,7 +9,7 @@ function App() {
   return (
     <div className="app-container">
       <SideBar />
-      <AdaptableSideBar />
+      <AdaptableSideBar mode="pm" />
       <div className="app-content">
         <BrowserRouter>
           <Routes>

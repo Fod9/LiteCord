@@ -1,0 +1,51 @@
+.friend-sidebar {
+  grid-area: friends;
+  background-color: #2f3136;
+  border-right: 1px solid #44454a;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 260px;
+}
+
+.friend-entry {
+  display: flex;
+  align-items: center;
+  padding: 10px 15px;
+  cursor: pointer;
+  gap: 10px;
+}
+
+.friend-entry:hover {
+  background-color: var(--hover-color);
+}
+
+.friend-entry img {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.indicator-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 15px;
+  border-bottom: 1px solid #44454a;
+  justify-content: space-between;
+}
+
+.indicator-header .lucide-plus {
+  width: 15px;
+  border-radius: 50%;
+  stroke: lightgray;
+  cursor: pointer;
+  stroke-width: 3px;
+}
+
+.indicator-header p {
+  margin: 0;
+  font-size: 12px;
+  color: gray;
+  font-weight: 550;
+}

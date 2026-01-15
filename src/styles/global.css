@@ -4,8 +4,16 @@
 }
 
 * {
+  --selection-color: rgba(255, 255, 255, 0.1);
+  --hover-color: rgba(255, 255, 255, 0.05);
   --background-color: #323339;
+  border: none;
+  outline: none;
   color: white;
+}
+
+.selected {
+  background-color: var(--selection-color);
 }
 
 body {
@@ -32,7 +40,7 @@ body {
 }
 
 .action-button.selected {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--selection-color);
 }
 
 .action-button.cta {
