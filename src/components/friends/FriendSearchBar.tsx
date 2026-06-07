@@ -1,10 +1,16 @@
-import { SearchIcon } from "lucide-react"
+interface FriendSearchBarProps {
+  value: string;
+  onChange: (value: string) => void;
+}
 
-export default function FriendSearchBar() {
+export default function FriendSearchBar({ value, onChange }: FriendSearchBarProps) {
   return (
-    <div className="friend-search-bar">
-      <SearchIcon />
-      <input type="text" placeholder="Rechercher" />
-    </div>
-  )
+    <input
+      className="fr-search"
+      type="text"
+      placeholder="Rechercher"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
 }

@@ -1,5 +1,5 @@
 import ChannelsSideBar from "./ChannelsSideBar";
-import FriendSideBar from "./FriendSideBar";
+import FriendSideBar from "./PrivateMessageSideBar";
 
 interface AdaptableSideBarProps {
   mode: 'channels' | 'pm';

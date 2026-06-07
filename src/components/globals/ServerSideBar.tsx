@@ -1,63 +1,21 @@
-import { useState } from "react"
+import "../../styles/server-sidebar.css";
 
-import "../../styles/server-sidebar.css"
-
-interface SideBarButtonProps {
-  icon: React.ReactNode
-  onClick: () => void
-  selected?: boolean
-  tooltip?: string
-}
-
-const ExempleButtonData = [
-  {
-    icon: <img src="https://picsum.photos/200" alt="Home" />,
-    onClick: () => console.log("Home clicked"),
-    tooltip: "Home",
-  },
-  {
-    icon: <img src="https://picsum.photos/200" alt="Search" />,
-    onClick: () => console.log("Search clicked"),
-    tooltip: "Search",
-  },
-  {
-    icon: <img src="https://picsum.photos/200" alt="Settings" />,
-    onClick: () => console.log("Settings clicked"),
-    tooltip: "Settings",
-  },
-]
-
-function ToolTip(text: string) {
+export default function ServerSideBar() {
   return (
-    <span className="tooltip-text" > {text}</ span >
-  )
-}
-
-function SideBarButton({ icon, onClick, selected, tooltip }: SideBarButtonProps) {
-  return (
-    <div className="sidebar-container">
-      {tooltip && ToolTip(tooltip)}
-      <button className="sidebar-button">
-        {icon}
-      </button >
-    </div >
-  )
-}
-
-export default function SideBar() {
-
-  const [elements, setElements] = useState(ExempleButtonData);
-
-  return (
-    <div className="sidebar">
-      {elements.map((el, index) => (
-        <SideBarButton
-          key={index}
-          icon={el.icon}
-          onClick={el.onClick}
-          tooltip={el.tooltip}
-        />
-      ))}
+    <div className="rail">
+      <button className="rail-item rail-home active" data-tooltip="Messages privés">
+        <span style={{ fontSize: 18 }}>✦</span>
+      </button>
+      <div className="rail-sep" />
+      <button className="rail-item" data-tooltip="Serveur 1">S1</button>
+      <button
+        className="rail-item"
+        data-tooltip="Serveur 2"
+        style={{ background: "linear-gradient(135deg,#34d399,#0ea5e9)" }}
+      >
+        S2
+      </button>
+      <button className="rail-add rail-item" data-tooltip="Ajouter un serveur">+</button>
     </div>
-  )
+  );
 }

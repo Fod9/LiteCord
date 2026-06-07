@@ -1,27 +1,38 @@
-import { UserRound } from "lucide-react"
-import { useState } from "react"
-import { MessageCirclePlus } from "lucide-react"
+import { UserRound } from "lucide-react";
+import type { FriendTab } from "../../routes/FriendPage";
 
-export default function FriendHeader() {
+interface FriendHeaderProps {
+  activeTab: FriendTab;
+  onTabChange: (tab: FriendTab) => void;
+  pendingCount: number;
+}
 
-  const [selectedButton, setSelectedButton] = useState<'all' | 'online'>('all');
-
+export default function FriendHeader({ activeTab, onTabChange, pendingCount }: FriendHeaderProps) {
   return (
-    <div className="header">
-      <div className="left">
-        <UserRound />
-        <h1>amis</h1>
-        <div className="header-actions">
-          <button className={`action-button ${selectedButton == "all" ? "selected" : ""}`} onClick={
-            () => setSelectedButton('all')
-          }>Tous</button>
-          <button className={`action-button ${selectedButton == "online" ? "selected" : ""}`} onClick={
-            () => setSelectedButton('online')
-          }>En ligne</button>
-          <button className="action-button cta">Ajouter</button>
-        </div>
+    <div className="friends-topbar">
+      <UserRound size={20} color="var(--text-muted)" />
+      <span className="friends-topbar-title">Amis</span>
+      <div className="friends-topbar-divider" />
+      <div className="tabs">
+        {(["En ligne", "Tous", "En attente"] as FriendTab[]).map((tab) => (
+          <button
+            key={tab}
+            className={`tab ${activeTab === tab ? "active" : ""}`}
+            onClick={() => onTabChange(tab)}
+          >
+            {tab}
+            {tab === "En attente" && pendingCount > 0 && (
+              <span className="pending-badge">{pendingCount}</span>
+            )}
+          </button>
+        ))}
+        <button
+          className={`tab tab-add ${activeTab === "Ajouter" ? "active" : ""}`}
+          onClick={() => onTabChange("Ajouter")}
+        >
+          Ajouter un ami
+        </button>
       </div>
-      <MessageCirclePlus />
-    </div >
-  )
+    </div>
+  );
 }
