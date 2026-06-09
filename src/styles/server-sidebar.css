@@ -1,5 +1,6 @@
 .rail {
   width: 72px;
+  height: 100%;
   background: var(--bg-base);
   display: flex;
   flex-direction: column;
@@ -7,6 +8,25 @@
   padding: 12px 0;
   gap: 8px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.rail-guilds {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: visible;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  width: 100%;
+  scrollbar-width: none;
+}
+
+.rail-guilds::-webkit-scrollbar {
+  display: none;
 }
 
 .rail-item {
@@ -104,16 +124,10 @@
   position: absolute;
   bottom: -2px;
   right: -2px;
-  background: var(--danger);
-  color: #fff;
+  width: 12px;
+  height: 12px;
+  background: #ed4245;
   border-radius: var(--radius-full);
-  font-size: 10px;
-  font-weight: 700;
-  min-width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 5px;
-  border: 3px solid var(--bg-base);
+  border: 2px solid var(--bg-base);
+  pointer-events: none;
 }

@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -62,14 +62,23 @@ pub async fn run(
 
                 match json.get("message_type").and_then(|v| v.as_str()) {
                     Some("friend_request") => {
-                        // content = JSON stringifié { friendship, from_user }
-                        if let Some(payload) = parse_content(&json) {
-                            let _ = app.emit("friend-request", &payload);
+                        // content = JSON stringifié { friendship, from_user } ou objet direct
+                        let payload = json.get("content").and_then(|c| {
+                            if c.is_object() { Some(c.clone()) }
+                            else { c.as_str().and_then(|s| serde_json::from_str(s).ok()) }
+                        });
+                        if let Some(p) = payload {
+                            let _ = app.emit("friend-request", &p);
                         }
                     }
                     Some("friend_request_updated") => {
-                        if let Some(payload) = parse_content(&json) {
-                            let _ = app.emit("friend-request-updated", &payload);
+                        // content = JSON stringifié { friendship, from_user } ou objet direct
+                        let payload = json.get("content").and_then(|c| {
+                            if c.is_object() { Some(c.clone()) }
+                            else { c.as_str().and_then(|s| serde_json::from_str(s).ok()) }
+                        });
+                        if let Some(p) = payload {
+                            let _ = app.emit("friend-request-updated", &p);
                         }
                     }
                     Some("dm_channel_created") => {
@@ -90,6 +99,46 @@ pub async fn run(
                             let _ = app.emit("new-message", &p);
                         }
                     }
+                    Some("friend_removed") => {
+                        // content = "friendship:<id>" (string brut)
+                        let friendship_id = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                        let _ = app.emit("friend-removed", friendship_id);
+                    }
+                    Some("guild_member_joined") => {
+                        if let Some(payload) = parse_content(&json) {
+                            let _ = app.emit("guild-member-joined", &payload);
+                        }
+                    }
+                    Some("guild_member_left") => {
+                        if let Some(payload) = parse_content(&json) {
+                            let _ = app.emit("guild-member-left", &payload);
+                        }
+                    }
+                    Some("guild_deleted") => {
+                        // content = "guild:<id>" (string brut)
+                        let guild_id = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                        let _ = app.emit("guild-deleted", guild_id);
+                    }
+                    Some("channel_created") => {
+                        // content peut être un objet direct ou un JSON stringifié
+                        let payload = json.get("content").and_then(|c| {
+                            if c.is_object() { Some(c.clone()) }
+                            else { c.as_str().and_then(|s| serde_json::from_str(s).ok()) }
+                        });
+                        if let Some(p) = payload {
+                            let _ = app.emit("channel-created", &p);
+                        }
+                    }
+                    Some("channel_deleted") => {
+                        if let Some(payload) = parse_content(&json) {
+                            let _ = app.emit("channel-deleted", &payload);
+                        }
+                    }
+                    Some("role_updated") => {
+                        if let Some(payload) = parse_content(&json) {
+                            let _ = app.emit("role-updated", &payload);
+                        }
+                    }
                     Some("user_online") => {
                         if let Some(user_id) = json.get("user_id").and_then(|v| v.as_str()) {
                             let _ = app.emit("user-online", user_id);
@@ -100,16 +149,66 @@ pub async fn run(
                             let _ = app.emit("user-offline", user_id);
                         }
                     }
+                    Some("error") => {
+                        let msg = json.get("content").and_then(|v| v.as_str()).unwrap_or("Erreur WS inconnue");
+                        eprintln!("[litecord] WS erreur serveur: {}", msg);
+                        let _ = app.emit("ws-error", msg);
+                    }
                     _ => {
-                        if json.get("status").and_then(|v| v.as_str()) == Some("authenticated") {
+                        let action = json.get("action").and_then(|v| v.as_str());
+                        let status = json.get("status").and_then(|v| v.as_str());
+
+                        if action == Some("token_refresh_required") {
+                            eprintln!("[litecord] WS token refresh requis");
+                            let refresh_token = app
+                                .state::<crate::AppState>()
+                                .token_store
+                                .lock()
+                                .unwrap()
+                                .load()
+                                .map(|t| t.refresh_token);
+
+                            match refresh_token {
+                                Some(rt) => {
+                                    let msg = serde_json::json!({ "refresh_token": rt }).to_string();
+                                    if let Err(e) = write.send(Message::Text(msg)).await {
+                                        eprintln!("[litecord] WS envoi refresh token échoué: {}", e);
+                                        break;
+                                    }
+                                }
+                                None => {
+                                    eprintln!("[litecord] WS refresh token introuvable, fermeture");
+                                    break;
+                                }
+                            }
+                        } else if status == Some("token_refreshed") {
+                            eprintln!("[litecord] WS tokens rafraîchis");
+                            let new_token = json.get("token").and_then(|v| v.as_str());
+                            let new_refresh = json.get("refresh_token").and_then(|v| v.as_str());
+
+                            if let (Some(token), Some(refresh_token)) = (new_token, new_refresh) {
+                                let tokens = crate::store::Tokens {
+                                    token: token.to_string(),
+                                    refresh_token: refresh_token.to_string(),
+                                };
+                                if let Err(e) = app
+                                    .state::<crate::AppState>()
+                                    .token_store
+                                    .lock()
+                                    .unwrap()
+                                    .save(&tokens)
+                                {
+                                    eprintln!("[litecord] WS sauvegarde tokens échouée: {}", e);
+                                }
+                            }
+                        } else if status == Some("authenticated") {
                             eprintln!("[litecord] WS authentifié");
-                            // Initialiser l'état de présence avec les amis déjà connectés
                             if let Some(arr) = json.get("friends_online").and_then(|v| v.as_array()) {
                                 let ids: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
                                 let _ = app.emit("friends-online-init", &ids);
                             }
                         } else if json.get("error").is_some() {
-                            eprintln!("[litecord] WS auth refusée: {}", json);
+                            eprintln!("[litecord] WS erreur: {}", json);
                             break;
                         }
                     }

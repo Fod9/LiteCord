@@ -37,7 +37,8 @@ pub struct Friendship {
     pub in_user: FriendUser,
     pub out_user: FriendUser,
     pub status: String,
-    pub created_at: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 #[tauri::command]
@@ -187,8 +188,7 @@ mod tests {
         "id": {"tb": "friendship", "id": {"String": "5kjela256dys3wm3rejv"}},
         "in_user": {"id": "user:aaa", "name": "FoD99", "display_name": "FoD99", "profile_picture": ""},
         "out_user": {"id": "user:bbb", "name": "FoD9", "display_name": "FoD9", "profile_picture": ""},
-        "status": "pending",
-        "created_at": "2026-06-07T03:45:23.194176Z"
+        "status": "pending"
     }"#;
 
     #[test]

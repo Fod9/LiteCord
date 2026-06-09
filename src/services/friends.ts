@@ -12,7 +12,7 @@ export interface Friendship {
   in_user: FriendUser;
   out_user: FriendUser;
   status: string;
-  created_at: string;
+  created_at?: string;
 }
 
 export async function addFriend(name: string): Promise<string> {

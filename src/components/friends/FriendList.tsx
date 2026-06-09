@@ -78,7 +78,10 @@ function FriendRow({
           <button
             className="round-btn no"
             title="Supprimer cet ami"
-            onClick={() => deleteFriend(friendship.id).then(onDelete).catch(console.error)}
+            onClick={() => deleteFriend(friendship.id).then(() => {
+              onDelete();
+              window.dispatchEvent(new CustomEvent("refresh-dm-channels"));
+            }).catch(console.error)}
           >
             <UserMinus size={17} />
           </button>
@@ -119,10 +122,8 @@ function PendingRow({
     try {
       await updateFriendRequest(friendship.id, action);
       if (action === "accept") {
-        // Créer le DM channel immédiatement sans attendre un premier message
         createDmChannel([friendship.in_user.id])
-          .then(() => window.dispatchEvent(new CustomEvent("refresh-dm-channels")))
-          .catch(console.error);
+          .finally(() => window.dispatchEvent(new CustomEvent("refresh-dm-channels")));
       }
       onAction();
     } catch (e) {

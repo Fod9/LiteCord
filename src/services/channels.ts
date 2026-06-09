@@ -16,18 +16,55 @@ export interface DmChannel {
   created_at: string;
 }
 
+/** Friendship tel que retourné par list_dm_channels (in_user/out_user = IDs bruts). */
+export interface DmListFriendship {
+  id: string;
+  in_user: string;
+  out_user: string;
+  status: string;
+  created_at?: string;
+}
+
+export interface DmState {
+  channels: DmChannel[];
+  friendships: DmListFriendship[];
+}
+
+export interface Attachment {
+  url: string;
+  filename: string;
+  size: number;
+}
+
 export interface Message {
   id: string;
   channel: string;
-  author: string;
+  author: ChatUser;
   content: string;
   reply_to: string | null;
+  attachments: Attachment[];
   edited_at: string | null;
   created_at: string;
 }
 
-export async function listDmChannels(): Promise<DmChannel[]> {
-  return invoke<DmChannel[]>("list_dm_channels");
+export async function uploadAttachment(
+  filename: string,
+  contentType: string,
+  data: number[],
+): Promise<Attachment> {
+  return invoke<Attachment>("upload_attachment", { filename, contentType, data });
+}
+
+export async function listDmChannels(): Promise<DmState> {
+  return invoke<DmState>("list_dm_channels");
+}
+
+export async function lockChannel(channelId: string): Promise<void> {
+  return invoke<void>("lock_channel", { channelId });
+}
+
+export async function unlockChannel(channelId: string): Promise<void> {
+  return invoke<void>("unlock_channel", { channelId });
 }
 
 export async function createDmChannel(recipientIds: string[]): Promise<DmChannel> {

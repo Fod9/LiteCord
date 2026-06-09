@@ -6,11 +6,13 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("react-router", () => ({ useParams: vi.fn(), useLocation: vi.fn() }));
 vi.mock("../../context/AuthContext", () => ({ useAuth: vi.fn() }));
+vi.mock("../../context/UnreadContext", () => ({ useUnread: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useParams, useLocation } from "react-router";
 import { useAuth } from "../../context/AuthContext";
+import { useUnread } from "../../context/UnreadContext";
 import DMPage from "../DMPage";
 
 const CHANNEL_ID = "DMChannel:abc";
@@ -19,7 +21,7 @@ const mockMessages = [
   {
     id: "message:001",
     channel: CHANNEL_ID,
-    author: "user:xyz",
+    author: { id: "user:xyz", name: "xyz", display_name: "Alice", profile_picture: "" },
     content: "Bonjour !",
     reply_to: null,
     edited_at: null,
@@ -28,7 +30,7 @@ const mockMessages = [
   {
     id: "message:002",
     channel: CHANNEL_ID,
-    author: "user:me",
+    author: { id: "user:me", name: "Me", display_name: "Moi", profile_picture: "" },
     content: "Salut !",
     reply_to: null,
     edited_at: null,
@@ -49,12 +51,26 @@ const mockChannel = {
   created_at: "2024-01-01T00:00:00Z",
 };
 
+function mockUnread(lockedChannels: Set<string> = new Set()) {
+  vi.mocked(useUnread).mockReturnValue({
+    unread: {},
+    dmUnread: false,
+    guildUnread: new Set(),
+    markRead: vi.fn(),
+    setActiveChannel: vi.fn(),
+    registerChannel: vi.fn(),
+    lockedChannels,
+    setChannelLocked: vi.fn(),
+  } as ReturnType<typeof useUnread>);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(useParams).mockReturnValue({ channelId: CHANNEL_ID });
   vi.mocked(useLocation).mockReturnValue({ state: { channel: mockChannel }, pathname: `/channels/${CHANNEL_ID}`, search: "", hash: "", key: "default" });
   vi.mocked(useAuth).mockReturnValue({ user: mockUser, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
   vi.mocked(listen).mockResolvedValue(() => {});
+  mockUnread();
 });
 
 describe("DMPage", () => {
@@ -92,10 +108,10 @@ describe("DMPage", () => {
   it("ajoute un nouveau message reçu via WS sans recharger", async () => {
     vi.mocked(invoke).mockResolvedValue(mockMessages);
 
-    let wsCallback: ((event: { payload: unknown }) => void) | null = null;
-    vi.mocked(listen).mockImplementation(async (_event, cb) => {
-      wsCallback = cb as typeof wsCallback;
-      return () => {}; // unlistenFn
+    const wsCallbacks: Record<string, (event: { payload: unknown }) => void> = {};
+    vi.mocked(listen).mockImplementation(async (event, cb) => {
+      wsCallbacks[event as string] = cb as (event: { payload: unknown }) => void;
+      return () => {};
     });
 
     render(<DMPage />);
@@ -104,14 +120,14 @@ describe("DMPage", () => {
     const newMsg = {
       id: "message:003",
       channel: CHANNEL_ID,
-      author: "user:xyz",
+      author: { id: "user:xyz", name: "xyz", display_name: "Alice", profile_picture: "" },
       content: "Un nouveau message !",
       reply_to: null,
       edited_at: null,
       created_at: "2024-01-01T10:02:00Z",
     };
 
-    act(() => wsCallback?.({ payload: newMsg }));
+    act(() => wsCallbacks["new-message"]?.({ payload: newMsg }));
 
     expect(screen.getByText("Un nouveau message !")).toBeInTheDocument();
   });
@@ -132,6 +148,16 @@ describe("DMPage", () => {
       content: "Test envoi",
     });
     expect((input as HTMLInputElement).value).toBe("");
+  });
+
+  it("affiche le message verrouillé quand le canal est verrouillé", async () => {
+    mockUnread(new Set([CHANNEL_ID]));
+    vi.mocked(invoke).mockResolvedValue([]);
+
+    render(<DMPage />);
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.getByText(/plus amis/i)).toBeInTheDocument();
   });
 
   it("n'envoie pas si le message est vide", async () => {
