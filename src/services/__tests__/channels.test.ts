@@ -56,7 +56,7 @@ describe("getChannelMessages", () => {
   it("invokes 'get_channel_messages' avec le channelId et retourne les messages", async () => {
     vi.mocked(invoke).mockResolvedValue(mockMessages);
     const result = await getChannelMessages("DMChannel:abc");
-    expect(invoke).toHaveBeenCalledWith("get_channel_messages", { channelId: "DMChannel:abc" });
+    expect(invoke).toHaveBeenCalledWith("get_channel_messages", { channelId: "DMChannel:abc", limit: 50, before: null });
     expect(result).toEqual(mockMessages);
   });
 

@@ -14,6 +14,13 @@ pub struct Guild {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct PermissionOverwrite {
+    pub target: String,
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct GuildChannel {
     pub id: String,
     pub guild: String,
@@ -21,6 +28,8 @@ pub struct GuildChannel {
     pub channel_type: String,
     pub category: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub permission_overwrites: Vec<PermissionOverwrite>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -50,6 +59,12 @@ pub struct GuildMember {
     pub roles: Vec<String>,
     pub nickname: Option<String>,
     pub joined_at: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct MemberWithPermissions {
+    pub member: GuildMember,
+    pub permissions: Vec<String>,
 }
 
 fn get_token(state: &State<'_, AppState>) -> Result<String, String> {
@@ -285,6 +300,8 @@ pub async fn create_guild_role(
     guild_id: String,
     name: String,
     color: String,
+    permissions: Vec<String>,
+    position: i32,
     state: State<'_, AppState>,
 ) -> Result<Role, String> {
     let token = get_token(&state)?;
@@ -293,7 +310,42 @@ pub async fn create_guild_role(
         .http
         .post(format!("{}/guilds/{}/roles", state.api_url, guild_id))
         .header("Authorization", format!("Bearer {}", token))
-        .json(&serde_json::json!({ "name": name, "color": color, "position": 0, "permissions": [] }))
+        .json(&serde_json::json!({ "name": name, "color": color, "position": position, "permissions": permissions }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(res.text().await.unwrap_or_else(|_| "Erreur serveur".into()));
+    }
+
+    res.json::<Role>().await.map_err(|e| e.to_string())
+}
+
+// Les champs `None` sont omis du corps et donc conservés par le serveur.
+#[tauri::command]
+pub async fn update_guild_role(
+    guild_id: String,
+    role_id: String,
+    name: Option<String>,
+    color: Option<String>,
+    position: Option<i32>,
+    permissions: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> Result<Role, String> {
+    let token = get_token(&state)?;
+
+    let mut body = serde_json::Map::new();
+    if let Some(v) = name { body.insert("name".into(), v.into()); }
+    if let Some(v) = color { body.insert("color".into(), v.into()); }
+    if let Some(v) = position { body.insert("position".into(), v.into()); }
+    if let Some(v) = permissions { body.insert("permissions".into(), v.into()); }
+
+    let res = state
+        .http
+        .patch(format!("{}/guilds/{}/roles/{}", state.api_url, guild_id, role_id))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&serde_json::Value::Object(body))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -350,6 +402,28 @@ pub async fn list_guild_members(
     }
 
     res.json::<Vec<GuildMember>>().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_my_guild_member(
+    guild_id: String,
+    state: State<'_, AppState>,
+) -> Result<MemberWithPermissions, String> {
+    let token = get_token(&state)?;
+
+    let res = state
+        .http
+        .get(format!("{}/guilds/{}/members/me", state.api_url, guild_id))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(res.text().await.unwrap_or_else(|_| "Erreur serveur".into()));
+    }
+
+    res.json::<MemberWithPermissions>().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -497,6 +571,34 @@ pub async fn remove_guild_role(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn set_channel_permissions(
+    guild_id: String,
+    channel_id: String,
+    permission_overwrites: Vec<PermissionOverwrite>,
+    state: State<'_, AppState>,
+) -> Result<GuildChannel, String> {
+    let token = get_token(&state)?;
+
+    let res = state
+        .http
+        .put(format!(
+            "{}/guilds/{}/channels/{}/permissions",
+            state.api_url, guild_id, channel_id
+        ))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&serde_json::json!({ "permission_overwrites": permission_overwrites }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(res.text().await.unwrap_or_else(|_| "Erreur serveur".into()));
+    }
+
+    res.json::<GuildChannel>().await.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,6 +630,24 @@ mod tests {
         let m: GuildMember = serde_json::from_str(json).unwrap();
         assert_eq!(m.nickname, Some("Bobby".to_string()));
         assert!(m.roles.is_empty());
+    }
+
+    #[test]
+    fn deserialise_member_with_permissions() {
+        let json = r#"{
+            "member": {
+                "id": "member_of:abc",
+                "user": {"id":"user:1","name":"alice","display_name":"Alice","profile_picture":""},
+                "roles": ["role:1"],
+                "nickname": null,
+                "joined_at": "2024-01-01T00:00:00Z"
+            },
+            "permissions": ["view_channels", "send_messages", "kick_members"]
+        }"#;
+        let m: MemberWithPermissions = serde_json::from_str(json).unwrap();
+        assert_eq!(m.member.user.name, "alice");
+        assert_eq!(m.permissions.len(), 3);
+        assert!(m.permissions.contains(&"kick_members".to_string()));
     }
 
     #[test]

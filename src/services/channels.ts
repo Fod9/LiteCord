@@ -50,9 +50,9 @@ export interface Message {
 export async function uploadAttachment(
   filename: string,
   contentType: string,
-  data: number[],
+  path: string,
 ): Promise<Attachment> {
-  return invoke<Attachment>("upload_attachment", { filename, contentType, data });
+  return invoke<Attachment>("upload_attachment", { filename, contentType, path });
 }
 
 export async function listDmChannels(): Promise<DmState> {
@@ -71,6 +71,13 @@ export async function createDmChannel(recipientIds: string[]): Promise<DmChannel
   return invoke<DmChannel>("create_dm_channel", { recipientIds });
 }
 
-export async function getChannelMessages(channelId: string): Promise<Message[]> {
-  return invoke<Message[]>("get_channel_messages", { channelId });
+export async function getChannelMessages(
+  channelId: string,
+  options?: { limit?: number; before?: string },
+): Promise<Message[]> {
+  return invoke<Message[]>("get_channel_messages", {
+    channelId,
+    limit: options?.limit ?? 50,
+    before: options?.before ?? null,
+  });
 }

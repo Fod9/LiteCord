@@ -137,6 +137,8 @@
   font-size: var(--text-sm);
   color: var(--text-muted);
   flex-shrink: 0;
+  display: flex;
+    align-items: center;
 }
 
 .channel-type-selector {
@@ -155,6 +157,9 @@
   font-weight: 500;
   cursor: pointer;
   transition: background 0.1s, color 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .channel-type-btn.selected {
@@ -181,4 +186,11 @@
   height: 8px;
   border-radius: var(--radius-full);
   background: var(--text-primary);
+}
+
+.voice-icon {
+  width: 16px;
+  height: 16px;
+  filter: invert(0.5);
+  margin-right: 4px;
 }

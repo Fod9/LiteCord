@@ -1,13 +1,15 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 mod auth;
 mod channels;
 mod friends;
 mod guilds;
+mod p2p;
 mod store;
+mod voice;
 mod ws;
 
 pub struct AppState {
@@ -17,28 +19,78 @@ pub struct AppState {
     pub ws_sender: Mutex<Option<UnboundedSender<String>>>,
     /// Canaux DM dont l'autre participant n'est plus ami — messages bloqués.
     pub locked_channels: Mutex<HashSet<String>>,
+    /// IDs des amis en ligne au moment de l'auth WS — snapshot initial de présence.
+    pub friends_online: Mutex<Vec<String>>,
+    /// Incrémenté à chaque appel connect_ws — permet d'invalider les boucles de reconnexion obsolètes.
+    pub ws_generation: Mutex<u64>,
+    /// Fichiers temporaires des transferts P2P en cours de réception.
+    pub p2p_receives: Mutex<HashMap<String, p2p::P2PReceive>>,
+    /// Channel vocal actuellement rejoint par l'utilisateur local.
+    pub current_voice_channel: Mutex<Option<String>>,
 }
 
 #[tauri::command]
 async fn connect_ws(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let token = state
-        .token_store
-        .lock()
-        .unwrap()
-        .load()
-        .ok_or("Non authentifié")?
-        .token;
-
     let api_url = state.api_url.clone();
-    let (tx, rx) = mpsc::unbounded_channel::<String>();
-    *state.ws_sender.lock().unwrap() = Some(tx);
+
+    // Invalide toute boucle de reconnexion précédente (re-login, etc.)
+    let my_gen = {
+        let mut gen = state.ws_generation.lock().unwrap();
+        *gen += 1;
+        *gen
+    };
 
     tauri::async_runtime::spawn(async move {
-        ws::run(app, api_url, token, rx).await;
-        // Connexion fermée — on vide le sender
+        let mut backoff_secs = 1u64;
+
+        loop {
+            // Arrêt si une nouvelle connexion a été demandée
+            if *app.state::<AppState>().ws_generation.lock().unwrap() != my_gen {
+                break;
+            }
+
+            // Récupère le token frais (peut avoir été rafraîchi entre deux tentatives)
+            let token = app
+                .state::<AppState>()
+                .token_store
+                .lock()
+                .unwrap()
+                .load()
+                .map(|t| t.token);
+
+            let Some(token) = token else {
+                eprintln!("[litecord] WS pas de token, arrêt reconnexion");
+                break;
+            };
+
+            let (tx, rx) = mpsc::unbounded_channel::<String>();
+            *app.state::<AppState>().ws_sender.lock().unwrap() = Some(tx);
+
+            ws::run(app.clone(), api_url.clone(), token, rx).await;
+
+            *app.state::<AppState>().ws_sender.lock().unwrap() = None;
+
+            // Logout pendant la connexion ?
+            if *app.state::<AppState>().ws_generation.lock().unwrap() != my_gen {
+                break;
+            }
+            if app.state::<AppState>().token_store.lock().unwrap().load().is_none() {
+                break;
+            }
+
+            eprintln!("[litecord] WS reconnexion dans {}s...", backoff_secs);
+            let _ = app.emit("ws-reconnecting", backoff_secs);
+            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(30);
+        }
     });
 
     Ok(())
+}
+
+#[tauri::command]
+async fn get_friends_online(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    Ok(state.friends_online.lock().unwrap().clone())
 }
 
 #[tauri::command]
@@ -86,10 +138,34 @@ async fn send_ws_message(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn relay_signal(
+    to: String,
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let payload = serde_json::json!({
+        "to": to,
+        "message_type": "relay",
+        "content": content,
+    })
+    .to_string();
+
+    state
+        .ws_sender
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("WebSocket non connecté")?
+        .send(payload)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let profile = std::env::args()
                 .skip_while(|a| a != "--profile")
@@ -115,12 +191,17 @@ pub fn run() {
                 http: reqwest::Client::new(),
                 ws_sender: Mutex::new(None),
                 locked_channels: Mutex::new(HashSet::new()),
+                friends_online: Mutex::new(Vec::new()),
+                ws_generation: Mutex::new(0),
+                p2p_receives: Mutex::new(HashMap::new()),
+                current_voice_channel: Mutex::new(None),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             connect_ws,
             send_ws_message,
+            get_friends_online,
             lock_channel,
             unlock_channel,
             auth::login,
@@ -148,13 +229,27 @@ pub fn run() {
             guilds::list_guild_invites,
             guilds::revoke_guild_invite,
             guilds::list_guild_members,
+            guilds::get_my_guild_member,
             guilds::kick_guild_member,
             guilds::list_guild_roles,
             guilds::create_guild_role,
+            guilds::update_guild_role,
             guilds::delete_guild_role,
             guilds::assign_guild_role,
             guilds::remove_guild_role,
+            guilds::set_channel_permissions,
             channels::upload_attachment,
+            channels::download_attachment,
+            relay_signal,
+            voice::join_voice_channel,
+            voice::leave_voice_channel,
+            voice::get_current_voice_channel,
+            p2p::get_file_size,
+            p2p::p2p_read_chunk,
+            p2p::p2p_receive_start,
+            p2p::p2p_receive_chunk,
+            p2p::p2p_receive_finish,
+            p2p::p2p_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

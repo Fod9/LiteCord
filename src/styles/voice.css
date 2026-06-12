@@ -1,0 +1,217 @@
+/* ─── Voice HUD — barre vocale dans la sidebar ───────────────────────────── */
+
+.voice-hud {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  background: #232428;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-family: var(--font-ui);
+}
+
+.voice-hud-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.voice-hud-connected {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: #3ba55d;
+}
+
+.voice-hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3ba55d;
+  flex-shrink: 0;
+}
+
+.voice-hud-channel-name {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.voice-hud-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.voice-hud-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.voice-hud-btn:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.voice-hud-btn--active {
+  color: var(--accent-light);
+}
+
+.voice-hud-btn--muted {
+  color: #ed4245;
+}
+
+.voice-hud-btn--leave {
+  color: var(--text-muted);
+}
+
+.voice-hud-btn--leave:hover {
+  background: rgba(237, 66, 69, 0.15);
+  color: #ed4245;
+}
+
+/* ─── Members in voice channel ───────────────────────────────────────────── */
+
+.voice-members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+  padding-left: 24px;
+}
+
+.voice-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.voice-member-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.voice-member--speaking .voice-member-avatar {
+  box-shadow: 0 0 0 2px #3ba55d;
+}
+
+/* ─── Channel row voice join button ──────────────────────────────────────── */
+
+.channel-voice-join {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.channel-row:hover .channel-voice-join {
+  opacity: 1;
+}
+
+.channel-voice-join:hover {
+  background: #3ba55d22;
+  color: #3ba55d;
+}
+
+.channel-voice-join--active {
+  opacity: 1;
+  color: #3ba55d;
+}
+
+.channel-voice-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+/* ─── Screen share overlay ───────────────────────────────────────────────── */
+
+.screen-share-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.screen-share-video {
+  max-width: 90vw;
+  max-height: 80vh;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+
+.screen-share-bar {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* ─── Channel permissions button ─────────────────────────────────────────── */
+
+.channel-perms-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.channel-row:hover .channel-perms-btn {
+  opacity: 1;
+}
+
+.channel-perms-btn:hover {
+  background: var(--accent-subtle);
+  color: var(--accent-light);
+}

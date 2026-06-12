@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useParams, useLocation } from "react-router";
 import { listen } from "@tauri-apps/api/event";
 import { Send, Paperclip, X } from "lucide-react";
+import { AttachmentView } from "../components/globals/AttachmentView";
 import { getChannelMessages, uploadAttachment, type Message, type Attachment } from "../services/channels";
-import { listGuildMembers, listGuildRoles, type GuildMember, type GuildChannel, type Role } from "../services/guilds";
+import { listGuildMembers, listGuildRoles, getGuildChannels, type GuildMember, type GuildChannel, type Role } from "../services/guilds";
 import { useResize } from "../hooks/useResize";
 import { useChatInput } from "../hooks/useChatInput";
 import { sendWsMessage } from "../services/ws";
@@ -13,31 +15,6 @@ import { useUnread } from "../context/UnreadContext";
 import "../styles/dm.css";
 import "../styles/member-list.css";
 
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"]);
-const AUDIO_EXTS = new Set(["mp3", "ogg", "wav", "flac", "m4a", "opus"]);
-
-function AttachmentView({ att }: { att: Attachment }) {
-  const ext = att.filename.split(".").pop()?.toLowerCase() ?? "";
-  if (IMAGE_EXTS.has(ext)) {
-    return <img src={att.url} alt={att.filename} className="att-image" />;
-  }
-  if (AUDIO_EXTS.has(ext)) {
-    return (
-      <div className="att-audio">
-        <span className="att-filename">{att.filename}</span>
-        <audio controls src={att.url} />
-      </div>
-    );
-  }
-  const kb = (att.size / 1024).toFixed(1);
-  return (
-    <a href={att.url} download={att.filename} className="att-file">
-      <Paperclip size={14} />
-      <span>{att.filename}</span>
-      <span className="att-size">{kb} KB</span>
-    </a>
-  );
-}
 
 function getInitials(name: string) {
   return name.replace(/[^A-Za-z0-9À-ÿ]/g, " ").trim()
@@ -126,17 +103,33 @@ function MemberList({ guildId }: { guildId: string }) {
 export default function GuildChannelPage() {
   const { guildId, channelId } = useParams<{ guildId: string; channelId: string }>();
   const { state } = useLocation();
-  const channel = state?.channel as GuildChannel | undefined;
+  const channelFromState = state?.channel as GuildChannel | undefined;
+  const [resolvedChannel, setResolvedChannel] = useState<GuildChannel | undefined>(channelFromState);
+  const channel = resolvedChannel;
   const { user } = useAuth();
+
+  // When state is absent (page refresh, direct URL), fetch channels to resolve the name
+  useEffect(() => {
+    if (channelFromState) { setResolvedChannel(channelFromState); return; }
+    if (!guildId || !channelId) return;
+    getGuildChannels(guildId)
+      .then((chs) => setResolvedChannel(chs.find((c) => c.id === channelId)))
+      .catch(console.error);
+  }, [guildId, channelId, channelFromState]);
   const { setLastVisited } = useGuild();
   const { setActiveChannel } = useUnread();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<{ name: string; path: string; contentType: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const prependScrollRef = useRef<number | null>(null);
+  const autoScrollRef = useRef(true);
 
   async function doSend(content: string) {
     if (!channelId) return;
@@ -145,20 +138,43 @@ export default function GuildChannelPage() {
       setUploading(true);
       try {
         attachments = await Promise.all(
-          pendingFiles.map(async (file) => {
-            const buf = await file.arrayBuffer();
-            return uploadAttachment(file.name, file.type || "application/octet-stream", Array.from(new Uint8Array(buf)));
-          }),
+          pendingFiles.map((f) => uploadAttachment(f.name, f.contentType, f.path)),
         );
       } finally {
         setUploading(false);
       }
       setPendingFiles([]);
     }
-    await sendWsMessage(channelId, content, attachments).catch((err) => {
+    const err = await sendWsMessage(channelId, content, attachments).catch((e) => e);
+    if (err) {
       setSendError(String(err));
       setTimeout(() => setSendError(null), 5000);
-    });
+    } else if (attachments) {
+      autoScrollRef.current = true;
+      getChannelMessages(channelId, { limit: 50 }).then((msgs) => {
+        setMessages(msgs);
+        setHasMore(msgs.length === 50);
+      }).catch(console.error);
+    }
+  }
+
+  async function loadOlder() {
+    if (!channelId || !hasMore || loadingMore || messages.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const older = await getChannelMessages(channelId, { limit: 50, before: messages[0].id });
+      if (older.length === 0) {
+        setHasMore(false);
+      } else {
+        prependScrollRef.current = scrollRef.current?.scrollHeight ?? null;
+        setMessages((prev) => [...older, ...prev]);
+        if (older.length < 50) setHasMore(false);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   const { ref: inputRef, resize: resizeInput, onKeyDown: chatKeyDown } = useChatInput(doSend);
@@ -178,10 +194,18 @@ export default function GuildChannelPage() {
     let cancelled = false;
     let unlistenFn: (() => void) | undefined;
 
-    getChannelMessages(channelId).then(setMessages).catch(console.error);
+    setHasMore(false);
+    autoScrollRef.current = true;
+    getChannelMessages(channelId, { limit: 50 }).then((msgs) => {
+      setMessages(msgs);
+      setHasMore(msgs.length === 50);
+    }).catch(console.error);
 
     listen<Message>("new-message", (event) => {
       if (event.payload.channel === channelId) {
+        const scroll = scrollRef.current;
+        const nearBottom = !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 150;
+        autoScrollRef.current = nearBottom;
         setMessages((prev) => [...prev, event.payload]);
       }
     }).then((fn) => {
@@ -189,7 +213,7 @@ export default function GuildChannelPage() {
       else unlistenFn = fn;
     });
 
-    const unlistenErr = listen<string>("ws-error", (event) => {
+    const unlistenErr = listen<string>("server-error", (event) => {
       setSendError(event.payload);
       setTimeout(() => setSendError(null), 5000);
     });
@@ -202,8 +226,39 @@ export default function GuildChannelPage() {
   }, [channelId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView?.({ behavior: "smooth" });
+    if (prependScrollRef.current !== null && scrollRef.current) {
+      scrollRef.current.scrollTop += scrollRef.current.scrollHeight - prependScrollRef.current;
+      prependScrollRef.current = null;
+    } else if (autoScrollRef.current && messages.length > 0) {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
   }, [messages]);
+
+  // Re-scroll when images/content load and expand the height
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const ro = new ResizeObserver(() => {
+      if (autoScrollRef.current && scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const onScroll = () => {
+      if (container.scrollTop < 100 && hasMore && !loadingMore) loadOlder();
+      const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+      if (!atBottom && prependScrollRef.current === null) autoScrollRef.current = false;
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, [hasMore, loadingMore]);
 
   function resolveAuthor(author: { id: string; display_name: string; name: string }): string {
     if (user && author.id === user.id) return user.display_name || user.name;
@@ -218,10 +273,21 @@ export default function GuildChannelPage() {
     if (el) { el.value = ""; resizeInput(); }
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []);
-    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files]);
-    e.target.value = "";
+  async function handleAttach() {
+    const result = await open({ multiple: true });
+    if (!result) return;
+    const paths = Array.isArray(result) ? result : [result];
+    const files = paths.map((p) => {
+      const name = p.split(/[/\\]/).pop() ?? p;
+      const ext = name.split(".").pop()?.toLowerCase() ?? "";
+      const contentType: Record<string, string> = {
+        png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+        webp: "image/webp", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg",
+        pdf: "application/pdf", txt: "text/plain", zip: "application/zip",
+      };
+      return { name, path: p, contentType: contentType[ext] ?? "application/octet-stream" };
+    });
+    setPendingFiles((prev) => [...prev, ...files]);
   }
 
   return (
@@ -233,7 +299,9 @@ export default function GuildChannelPage() {
           <div className="dm-topbar-spacer" />
         </div>
 
-        <div className="dm-scroll">
+        <div className="dm-scroll" ref={scrollRef}>
+          {loadingMore && <div className="dm-load-more">Chargement…</div>}
+          <div ref={contentRef}>
           <div className="dm-intro">
             <div className="channel-intro-icon">#</div>
             <h2>{channelDisplayName}</h2>
@@ -267,6 +335,7 @@ export default function GuildChannelPage() {
             })
           )}
           <div ref={bottomRef} />
+          </div>
         </div>
 
         <div className="dm-input-bar">
@@ -282,8 +351,7 @@ export default function GuildChannelPage() {
             </div>
           )}
           <div className={`dm-input-wrap ${inputFocused ? "focused" : ""}`}>
-            <input type="file" multiple ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
-            <button className="dm-attach-btn" onClick={() => fileInputRef.current?.click()} title="Joindre un fichier">
+            <button className="dm-attach-btn" onClick={handleAttach} title="Joindre un fichier">
               <Paperclip size={18} />
             </button>
             <textarea

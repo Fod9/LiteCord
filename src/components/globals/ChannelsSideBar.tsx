@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useResize } from "../../hooks/useResize";
 import { useNavigate, useParams } from "react-router";
+import UserBar from "./UserBar";
 import { useGuild } from "../../context/GuildContext";
-import { useAuth } from "../../context/AuthContext";
 import {
   getGuildChannels,
   createGuildChannel,
@@ -12,8 +12,15 @@ import {
   type GuildChannel,
 } from "../../services/guilds";
 import GuildSettingsModal from "./GuildSettingsModal";
+import ChannelPermissionsModal from "./ChannelPermissionsModal";
+import VoiceHUD from "../voice/VoiceHUD";
 import { useUnread } from "../../context/UnreadContext";
+import { usePermissions } from "../../hooks/usePermissions";
+import { useVoice } from "../../context/VoiceContext";
+import { parseApiError } from "../../services/permissions";
 import "../../styles/channels-sidebar.css";
+import "../../styles/voice.css";
+
 
 function groupByCategory(channels: GuildChannel[]): Map<string | null, GuildChannel[]> {
   const map = new Map<string | null, GuildChannel[]>();
@@ -49,7 +56,7 @@ function CreateChannelModal({
       onCreated(ch);
       onClose();
     } catch (err) {
-      setError(String(err));
+      setError(parseApiError(err));
     }
   }
 
@@ -74,7 +81,7 @@ function CreateChannelModal({
                 className={`channel-type-btn${channelType === t ? " selected" : ""}`}
                 onClick={() => setChannelType(t)}
               >
-                {t === "Text" ? "# Texte" : "🔊 Vocal"}
+                {t === "Text" ? "# Texte" : <img src="src/assets/icones/speaker.png" alt="Voice" className="voice-icon" />} Voix
               </button>
             ))}
           </div>
@@ -97,7 +104,6 @@ function CreateChannelModal({
 
 export default function ChannelsSideBar() {
   const { selectedGuild, selectGuild } = useGuild();
-  const { user } = useAuth();
   const { unread, registerChannel } = useUnread();
   const { width, onMouseDown } = useResize(220, 140, 400, "right", "sidebar-channels-width");
   const navigate = useNavigate();
@@ -105,8 +111,10 @@ export default function ChannelsSideBar() {
   const [channels, setChannels] = useState<GuildChannel[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [permsChannel, setPermsChannel] = useState<GuildChannel | null>(null);
 
-  const isOwner = !!selectedGuild && !!user && selectedGuild.owner === user.id;
+  const { can, isOwner } = usePermissions(selectedGuild);
+  const { voiceStates, currentChannelId: voiceChannelId, join: joinVoice } = useVoice();
 
   useEffect(() => {
     if (!selectedGuild) return;
@@ -130,9 +138,15 @@ export default function ChannelsSideBar() {
       setChannels((prev) => prev.filter((c) => c.id !== e.payload.channel_id));
     });
 
+    const u3 = listen<GuildChannel>("channel-permissions-updated", (e) => {
+      if (e.payload.guild !== guildId) return;
+      setChannels((prev) => prev.map((c) => c.id === e.payload.id ? e.payload : c));
+    });
+
     return () => {
       u1.then((fn) => fn());
       u2.then((fn) => fn());
+      u3.then((fn) => fn());
     };
   }, [selectedGuild?.id]);
 
@@ -150,10 +164,17 @@ export default function ChannelsSideBar() {
   }
 
   function handleChannelClick(ch: GuildChannel) {
-    if (!selectedGuild || ch.channel_type !== "Text") return;
-    navigate(`/guilds/${selectedGuild.id}/channels/${ch.id}`, {
-      state: { channel: ch, guild: selectedGuild },
-    });
+    if (!selectedGuild) return;
+    if (ch.channel_type === "Text") {
+      navigate(`/guilds/${selectedGuild.id}/channels/${ch.id}`, {
+        state: { channel: ch, guild: selectedGuild },
+      });
+    } else if (ch.channel_type === "Voice") {
+      joinVoice(selectedGuild.id, ch.id).catch(console.error);
+      navigate(`/guilds/${selectedGuild.id}/voice/${ch.id}`, {
+        state: { channel: ch, guild: selectedGuild },
+      });
+    }
   }
 
   if (!selectedGuild) return null;
@@ -174,20 +195,18 @@ export default function ChannelsSideBar() {
               onClick={handleLeave}
             >⬡</button>
           )}
-          {isOwner && (
+          {can("manage_channels") && (
             <button
               className="channels-icon-btn"
               aria-label="Créer un channel"
               onClick={() => setShowCreate(true)}
             >+</button>
           )}
-          {isOwner && (
-            <button
-              className="channels-icon-btn"
-              aria-label="Paramètres du serveur"
-              onClick={() => setShowSettings(true)}
-            >⚙</button>
-          )}
+          <button
+            className="channels-icon-btn"
+            aria-label="Paramètres du serveur"
+            onClick={() => setShowSettings(true)}
+          >⚙</button>
         </div>
       </div>
 
@@ -195,32 +214,67 @@ export default function ChannelsSideBar() {
         {Array.from(grouped.entries()).map(([category, chs]) => (
           <div key={category ?? "__none__"} className="channel-group">
             {category && <div className="channel-category">{category}</div>}
-            {chs.map((ch) => (
-              <div key={ch.id} className="channel-row">
-                <button
-                  className={`channel-item${activeChannelId === ch.id ? " active" : ""}${unread[ch.id] ? " channel-item--unread" : ""}`}
-                  onClick={() => handleChannelClick(ch)}
-                >
-                  <span className="channel-prefix">
-                    {ch.channel_type === "Voice" ? "🔊" : "#"}
-                  </span>
-                  <span className="channel-item-name">{ch.name}</span>
-                  {unread[ch.id] > 0 && (
-                    <span className="channel-unread-dot" />
+            {chs.map((ch) => {
+              const voiceMembers = ch.channel_type === "Voice" ? (voiceStates[ch.id] ?? []) : [];
+              const isInThisVoice = voiceChannelId === ch.id;
+              return (
+                <div key={ch.id} className="channel-group">
+                  <div className="channel-row">
+                    <button
+                      className={`channel-item${activeChannelId === ch.id || isInThisVoice ? " active" : ""}${unread[ch.id] ? " channel-item--unread" : ""}`}
+                      onClick={() => handleChannelClick(ch)}
+                    >
+                      <span className="channel-prefix">
+                        {ch.channel_type === "Voice" ? <img src="src/assets/icones/speaker.png" alt="Voice" className="voice-icon"/> : "#"}
+                      </span>
+                      <span className="channel-item-name">{ch.name}</span>
+                      {unread[ch.id] > 0 && ch.channel_type === "Text" && (
+                        <span className="channel-unread-dot" />
+                      )}
+                      {ch.channel_type === "Voice" && voiceMembers.length > 0 && (
+                        <span className="channel-voice-count">{voiceMembers.length}</span>
+                      )}
+                    </button>
+                    {can("manage_channels") && (
+                      <button
+                        className="channel-perms-btn"
+                        aria-label={`Permissions de ${ch.name}`}
+                        title="Modifier les permissions"
+                        onClick={(e) => { e.stopPropagation(); setPermsChannel(ch); }}
+                      >🔒</button>
+                    )}
+                    {can("manage_channels") && (
+                      <button
+                        className="channel-delete-btn"
+                        aria-label={`Supprimer ${ch.name}`}
+                        onClick={() => handleDelete(ch)}
+                      >✕</button>
+                    )}
+                  </div>
+                  {ch.channel_type === "Voice" && voiceMembers.length > 0 && (
+                    <div className="voice-members">
+                      {voiceMembers.map((u) => {
+                        const initials = (u.display_name || u.name)
+                          .replace(/[^A-Za-z0-9À-ÿ]/g, " ").trim()
+                          .split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
+                        return (
+                          <div key={u.id} className="voice-member">
+                            <div className="voice-member-avatar">{initials}</div>
+                            <span>{u.display_name || u.name}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
-                </button>
-                {isOwner && (
-                  <button
-                    className="channel-delete-btn"
-                    aria-label={`Supprimer ${ch.name}`}
-                    onClick={() => handleDelete(ch)}
-                  >✕</button>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         ))}
       </div>
+
+      <VoiceHUD channelName={channels.find((c) => c.id === voiceChannelId)?.name} />
+      <UserBar />
 
       {showCreate && (
         <CreateChannelModal
@@ -235,6 +289,17 @@ export default function ChannelsSideBar() {
           guild={selectedGuild}
           onClose={() => setShowSettings(false)}
           onDeleted={() => selectGuild(null)}
+        />
+      )}
+
+      {permsChannel && (
+        <ChannelPermissionsModal
+          channel={permsChannel}
+          guildId={selectedGuild.id}
+          onClose={() => setPermsChannel(null)}
+          onSaved={(updated) => {
+            setChannels((prev) => prev.map((c) => c.id === updated.id ? updated : c));
+          }}
         />
       )}
     </div>

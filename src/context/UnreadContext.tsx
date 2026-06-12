@@ -12,10 +12,14 @@ interface UnreadContextValue {
   dmUnread: boolean;
   guildUnread: Set<string>;
   lockedChannels: Set<string>;
+  pendingFriendRequests: number;
   markRead: (channelId: string) => void;
   setActiveChannel: (channelId: string | null) => void;
   registerChannel: (channelId: string, type: "dm" | "guild", guildId?: string) => void;
   setChannelLocked: (channelId: string, locked: boolean) => void;
+  setPendingFriendRequests: (count: number) => void;
+  registerFriendPendingRefresh: (fn: () => void) => void;
+  registerFriendListRefresh: (fn: () => void) => void;
 }
 
 const UnreadContext = createContext<UnreadContextValue>({
@@ -23,17 +27,32 @@ const UnreadContext = createContext<UnreadContextValue>({
   dmUnread: false,
   guildUnread: new Set(),
   lockedChannels: new Set(),
+  pendingFriendRequests: 0,
   markRead: () => {},
   setActiveChannel: () => {},
   registerChannel: () => {},
   setChannelLocked: () => {},
+  setPendingFriendRequests: () => {},
+  registerFriendPendingRefresh: () => {},
+  registerFriendListRefresh: () => {},
 });
 
 export function UnreadProvider({ children }: { children: React.ReactNode }) {
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [lockedChannels, setLockedChannels] = useState<Set<string>>(new Set());
+  const [pendingFriendRequests, setPendingFriendRequests] = useState(0);
   const activeChannelRef = useRef<string | null>(null);
   const channelMetaRef = useRef<Record<string, ChannelMeta>>({});
+  const friendPendingRefreshRef = useRef<(() => void) | null>(null);
+  const friendListRefreshRef = useRef<(() => void) | null>(null);
+
+  function registerFriendPendingRefresh(fn: () => void) {
+    friendPendingRefreshRef.current = fn;
+  }
+
+  function registerFriendListRefresh(fn: () => void) {
+    friendListRefreshRef.current = fn;
+  }
 
   useEffect(() => {
     const unlisten = listen<Message>("new-message", (event) => {
@@ -41,7 +60,22 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
       if (channelId === activeChannelRef.current) return;
       setUnread((prev) => ({ ...prev, [channelId]: (prev[channelId] ?? 0) + 1 }));
     });
-    return () => { unlisten.then((fn) => fn()); };
+
+    const unlistenFriendRequest = listen("friend-request", () => {
+      setPendingFriendRequests((prev) => prev + 1);
+      friendPendingRefreshRef.current?.();
+    });
+
+    const unlistenFriendUpdated = listen("friend-request-updated", () => {
+      friendPendingRefreshRef.current?.();
+      friendListRefreshRef.current?.();
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+      unlistenFriendRequest.then((fn) => fn());
+      unlistenFriendUpdated.then((fn) => fn());
+    };
   }, []);
 
   function markRead(channelId: string) {
@@ -83,7 +117,7 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <UnreadContext.Provider value={{ unread, dmUnread, guildUnread, lockedChannels, markRead, setActiveChannel, registerChannel, setChannelLocked }}>
+    <UnreadContext.Provider value={{ unread, dmUnread, guildUnread, lockedChannels, pendingFriendRequests, markRead, setActiveChannel, registerChannel, setChannelLocked, setPendingFriendRequests, registerFriendPendingRefresh, registerFriendListRefresh }}>
       {children}
     </UnreadContext.Provider>
   );

@@ -22,25 +22,22 @@ pub async fn run(
     token: String,
     mut rx: UnboundedReceiver<String>,
 ) {
-    let url = format!("{}/ws/", api_url_to_ws(&api_url));
+    // Authentification via query param : évite les problèmes de timing liés au premier message
+    let url = format!("{}/ws/?token={}", api_url_to_ws(&api_url), token);
 
     let (ws_stream, _) = match connect_async(&url).await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[litecord] WS connexion échouée ({}): {}", url, e);
+            eprintln!("[litecord] WS connexion échouée: {}", e);
+            let _ = app.emit("ws-error", format!("Connexion WS échouée: {}", e));
             return;
         }
     };
 
     let (mut write, mut read) = ws_stream.split();
 
-    let auth = serde_json::json!({ "token": token }).to_string();
-    if let Err(e) = write.send(Message::Text(auth)).await {
-        eprintln!("[litecord] WS auth échouée: {}", e);
-        return;
-    }
-
-    eprintln!("[litecord] WS connecté à {}", url);
+    eprintln!("[litecord] WS connecté");
+    let _ = app.emit("ws-connected", ());
 
     loop {
         tokio::select! {
@@ -139,20 +136,71 @@ pub async fn run(
                             let _ = app.emit("role-updated", &payload);
                         }
                     }
+                    Some("role_created") => {
+                        if let Some(payload) = parse_content(&json) {
+                            let _ = app.emit("role-created", &payload);
+                        }
+                    }
+                    Some("role_modified") => {
+                        if let Some(payload) = parse_content(&json) {
+                            let _ = app.emit("role-modified", &payload);
+                        }
+                    }
+                    Some("role_deleted") => {
+                        if let Some(payload) = parse_content(&json) {
+                            let _ = app.emit("role-deleted", &payload);
+                        }
+                    }
+                    Some("voice_state_update") => {
+                        if let Some(payload) = parse_content(&json) {
+                            // Si l'utilisateur vocal a quitté son channel, nettoyer l'état local
+                            if payload.get("channel_id").map(|v| v.is_null()).unwrap_or(false) {
+                                // no-op côté Rust — c'est le frontend qui gère la présence vocale
+                            }
+                            let _ = app.emit("voice-state-update", &payload);
+                        }
+                    }
+                    Some("channel_permissions_updated") => {
+                        let payload = json.get("content").and_then(|c| {
+                            if c.is_object() { Some(c.clone()) }
+                            else { c.as_str().and_then(|s| serde_json::from_str(s).ok()) }
+                        });
+                        if let Some(p) = payload {
+                            let _ = app.emit("channel-permissions-updated", &p);
+                        }
+                    }
+                    Some("relay") => {
+                        // Signal P2P (WebRTC SDP/ICE) — on relaie tout le message vers le frontend
+                        let _ = app.emit("p2p-signal", &json);
+                    }
                     Some("user_online") => {
                         if let Some(user_id) = json.get("user_id").and_then(|v| v.as_str()) {
+                            let uid = user_id.to_string();
+                            {
+                                let app_state = app.state::<crate::AppState>();
+                                let mut fo = app_state.friends_online.lock().unwrap();
+                                if !fo.contains(&uid) { fo.push(uid); }
+                            }
                             let _ = app.emit("user-online", user_id);
                         }
                     }
                     Some("user_offline") => {
                         if let Some(user_id) = json.get("user_id").and_then(|v| v.as_str()) {
+                            let uid = user_id.to_string();
+                            {
+                                let app_state = app.state::<crate::AppState>();
+                                let mut fo = app_state.friends_online.lock().unwrap();
+                                fo.retain(|id| id != &uid);
+                            }
                             let _ = app.emit("user-offline", user_id);
                         }
                     }
                     Some("error") => {
-                        let msg = json.get("content").and_then(|v| v.as_str()).unwrap_or("Erreur WS inconnue");
+                        let msg = json.get("content").and_then(|v| v.as_str()).unwrap_or("Erreur serveur inconnue");
                         eprintln!("[litecord] WS erreur serveur: {}", msg);
-                        let _ = app.emit("ws-error", msg);
+                        // "server-error" = erreur applicative (commande rejetée, permission manquante…)
+                        // ≠ "ws-error" qui est réservé aux pannes de connexion WS
+                        let _ = app.emit("server-error", msg);
                     }
                     _ => {
                         let action = json.get("action").and_then(|v| v.as_str());
@@ -204,8 +252,12 @@ pub async fn run(
                         } else if status == Some("authenticated") {
                             eprintln!("[litecord] WS authentifié");
                             if let Some(arr) = json.get("friends_online").and_then(|v| v.as_array()) {
-                                let ids: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+                                let ids: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+                                *app.state::<crate::AppState>().friends_online.lock().unwrap() = ids.clone();
                                 let _ = app.emit("friends-online-init", &ids);
+                            }
+                            if let Some(states) = json.get("voice_states").and_then(|v| v.as_array()) {
+                                let _ = app.emit("voice-states-init", states);
                             }
                         } else if json.get("error").is_some() {
                             eprintln!("[litecord] WS erreur: {}", json);

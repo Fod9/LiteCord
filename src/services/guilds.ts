@@ -8,6 +8,12 @@ export interface Guild {
   created_at: string;
 }
 
+export interface PermissionOverwrite {
+  target: string;
+  allow: string[];
+  deny: string[];
+}
+
 export interface GuildChannel {
   id: string;
   guild: string;
@@ -15,6 +21,7 @@ export interface GuildChannel {
   channel_type: "Text" | "Voice";
   category: string | null;
   created_at: string;
+  permission_overwrites: PermissionOverwrite[];
 }
 
 export interface Role {
@@ -88,8 +95,32 @@ export async function listGuildRoles(guildId: string): Promise<Role[]> {
   return invoke<Role[]>("list_guild_roles", { guildId });
 }
 
-export async function createGuildRole(guildId: string, name: string, color: string): Promise<Role> {
-  return invoke<Role>("create_guild_role", { guildId, name, color });
+export async function createGuildRole(
+  guildId: string,
+  name: string,
+  color: string,
+  permissions: string[] = [],
+  position = 0
+): Promise<Role> {
+  return invoke<Role>("create_guild_role", { guildId, name, color, permissions, position });
+}
+
+export interface RolePatch {
+  name?: string;
+  color?: string;
+  position?: number;
+  permissions?: string[];
+}
+
+export async function updateGuildRole(guildId: string, roleId: string, patch: RolePatch): Promise<Role> {
+  return invoke<Role>("update_guild_role", {
+    guildId,
+    roleId,
+    name: patch.name ?? null,
+    color: patch.color ?? null,
+    position: patch.position ?? null,
+    permissions: patch.permissions ?? null,
+  });
 }
 
 export async function deleteGuildRole(guildId: string, roleId: string): Promise<void> {
@@ -102,6 +133,15 @@ export async function updateGuild(guildId: string, name: string | null, icon: st
 
 export async function listGuildMembers(guildId: string): Promise<GuildMember[]> {
   return invoke<GuildMember[]>("list_guild_members", { guildId });
+}
+
+export interface MemberWithPermissions {
+  member: GuildMember;
+  permissions: string[];
+}
+
+export async function getMyGuildMember(guildId: string): Promise<MemberWithPermissions> {
+  return invoke<MemberWithPermissions>("get_my_guild_member", { guildId });
 }
 
 export async function kickGuildMember(guildId: string, userId: string): Promise<void> {
@@ -122,4 +162,12 @@ export async function assignGuildRole(guildId: string, userId: string, roleId: s
 
 export async function removeGuildRole(guildId: string, userId: string, roleId: string): Promise<void> {
   return invoke<void>("remove_guild_role", { guildId, userId, roleId });
+}
+
+export async function setChannelPermissions(
+  guildId: string,
+  channelId: string,
+  overwrites: PermissionOverwrite[]
+): Promise<GuildChannel> {
+  return invoke<GuildChannel>("set_channel_permissions", { guildId, channelId, permissionOverwrites: overwrites });
 }

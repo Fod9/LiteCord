@@ -45,7 +45,11 @@ function FriendRow({
     if (!message.trim()) return;
     setSending(true);
     try {
-      await sendWsMessage(other.id, message.trim());
+      // createDmChannel est idempotent — crée ou retourne le channel existant.
+      // On l'appelle AVANT d'envoyer pour garantir que le channel existe
+      // côté serveur quand le sidebar se rafraîchit.
+      const channel = await createDmChannel([other.id]);
+      await sendWsMessage(channel.id, message.trim());
       setMessage("");
       setShowInput(false);
       window.dispatchEvent(new CustomEvent("refresh-dm-channels"));

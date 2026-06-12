@@ -31,8 +31,8 @@ beforeEach(() => {
   vi.mocked(listen).mockResolvedValue(() => {});
   vi.mocked(useNavigate).mockReturnValue(mockNavigate);
   vi.mocked(useGuild).mockReturnValue({ selectedGuild: null, selectGuild: mockSelectGuild, lastVisited: {}, setLastVisited: vi.fn() });
-  vi.mocked(useAuth).mockReturnValue({ user: { id: "user:me", name: "me", display_name: "Me", profile_picture: "" }, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
-  vi.mocked(useUnread).mockReturnValue({ unread: {}, dmUnread: false, guildUnread: new Set(), markRead: vi.fn(), setActiveChannel: vi.fn(), registerChannel: vi.fn(), lockedChannels: new Set(), setChannelLocked: vi.fn() });
+  vi.mocked(useAuth).mockReturnValue({ user: { id: "user:me", name: "me", display_name: "Me", profile_picture: "" }, isLoading: false, wsStatus: "connected" as const, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+  vi.mocked(useUnread).mockReturnValue({ unread: {}, dmUnread: false, guildUnread: new Set(), markRead: vi.fn(), setActiveChannel: vi.fn(), registerChannel: vi.fn(), lockedChannels: new Set(), setChannelLocked: vi.fn(), pendingFriendRequests: 0, setPendingFriendRequests: vi.fn(), registerFriendPendingRefresh: vi.fn(), registerFriendListRefresh: vi.fn() } as ReturnType<typeof useUnread>);
 });
 
 describe("ServerSideBar", () => {

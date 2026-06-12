@@ -130,6 +130,8 @@ pub async fn create_dm_channel(
 #[tauri::command]
 pub async fn get_channel_messages(
     channel_id: String,
+    limit: Option<u32>,
+    before: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Message>, String> {
     let token = state
@@ -140,13 +142,18 @@ pub async fn get_channel_messages(
         .ok_or("Non authentifié")?
         .token;
 
-    let res = state
+    let limit = limit.unwrap_or(50).min(100);
+    let mut req = state
         .http
         .get(format!("{}/channels/{}/messages", state.api_url, channel_id))
         .header("Authorization", format!("Bearer {}", token))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .query(&[("limit", limit.to_string())]);
+
+    if let Some(b) = before {
+        req = req.query(&[("before", b)]);
+    }
+
+    let res = req.send().await.map_err(|e| e.to_string())?;
 
     if !res.status().is_success() {
         return Err(res.text().await.unwrap_or_else(|_| "Erreur serveur".into()));
@@ -159,9 +166,20 @@ pub async fn get_channel_messages(
 pub async fn upload_attachment(
     filename: String,
     content_type: String,
-    data: Vec<u8>,
+    path: String,
     state: State<'_, AppState>,
 ) -> Result<Attachment, String> {
+    const MAX_SIZE: u64 = 100 * 1024 * 1024;
+
+    let size = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| format!("Impossible de lire le fichier : {}", e))?
+        .len();
+
+    if size > MAX_SIZE {
+        return Err(format!("Fichier trop volumineux ({} Mo, max 100 Mo)", size / 1024 / 1024));
+    }
+
     let token = state
         .token_store
         .lock()
@@ -169,8 +187,6 @@ pub async fn upload_attachment(
         .load()
         .ok_or("Non authentifié")?
         .token;
-
-    let size = data.len() as i64;
 
     // Step 1 — presign
     let presign_res = state
@@ -180,7 +196,7 @@ pub async fn upload_attachment(
         .json(&serde_json::json!({
             "filename": filename,
             "content_type": content_type,
-            "size": size
+            "size": size as i64
         }))
         .send()
         .await
@@ -192,20 +208,69 @@ pub async fn upload_attachment(
 
     let presign: PresignResponse = presign_res.json().await.map_err(|e| e.to_string())?;
 
-    // Step 2 — PUT direct vers RustFS (URL déjà signée, pas de token ni Content-Type)
+    // Step 2 — lecture dans Rust (pas en JS) + PUT avec taille exacte connue
+    // reqwest ne peut pas fixer Content-Length sur un Body::wrap_stream (hyper 1.x ignore le hint),
+    // ce qui force le chunked encoding que MinIO rejette sur les presigned URLs.
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("Lecture fichier échouée : {}", e))?;
+
     let upload_res = state
         .http
         .put(&presign.upload_url)
-        .body(data)
+        .body(bytes)
         .send()
         .await
         .map_err(|e| e.to_string())?;
 
     if !upload_res.status().is_success() {
-        return Err(format!("Upload échoué: {}", upload_res.status()));
+        return Err(format!("Upload échoué : {}", upload_res.status()));
     }
 
-    Ok(Attachment { url: presign.cdn_url, filename, size })
+    Ok(Attachment { url: presign.cdn_url, filename, size: size as i64 })
+}
+
+#[tauri::command]
+pub async fn download_attachment(
+    url: String,
+    filename: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    // HEAD check — détecte les ressources indisponibles sans télécharger le corps
+    let head = state
+        .http
+        .head(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if head.status() == 404 {
+        return Err("indisponible".into());
+    }
+    if !head.status().is_success() {
+        return Err(format!("Erreur CDN {}", head.status()));
+    }
+
+    // Télécharge le fichier
+    let bytes = state
+        .http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Sauvegarde dans le dossier Téléchargements
+    let download_dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    let save_path = download_dir.join(&filename);
+    tokio::fs::write(&save_path, &bytes).await.map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -374,3 +374,128 @@
 }
 .role-tag:hover { border-color: rgba(255,255,255,0.4); color: var(--text-primary); }
 .role-tag--active { background: rgba(255,255,255,0.06); }
+
+/* Éditeur de permissions des rôles */
+.roles-editor {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  min-height: 0;
+}
+
+.roles-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 200px;
+  flex-shrink: 0;
+}
+
+.role-name {
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.role-row--selected {
+  outline: 1px solid var(--accent, #8257e6);
+}
+
+.roles-editor-placeholder {
+  align-self: center;
+  flex: 1;
+  text-align: center;
+}
+
+.role-perm-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.role-perm-identity {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.role-color-input {
+  width: 36px;
+  height: 36px;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.perm-category-title {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.perm-row:hover { background: rgba(255,255,255,0.04); }
+
+.perm-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.perm-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.perm-description {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.perm-toggle {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent, #8257e6);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.perm-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.role-move-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.role-move-btn:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+.role-move-btn:disabled { opacity: 0.3; cursor: default; }

@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { useResize } from "../../hooks/useResize";
 import { useNavigate, useParams, useLocation } from "react-router";
 import { listen } from "@tauri-apps/api/event";
-import { Plus, UserRound, Settings, Mic, Headphones } from "lucide-react";
+import { Plus, UserRound } from "lucide-react";
 import { listDmChannels, createDmChannel, lockChannel, unlockChannel } from "../../services/channels";
 import type { DmChannel } from "../../services/channels";
 import { useAuth } from "../../context/AuthContext";
 import { usePresence } from "../../context/PresenceContext";
 import { useUnread } from "../../context/UnreadContext";
 import CreateDmModal from "./CreateDmModal";
+import UserBar from "./UserBar";
 import "../../styles/friend-sidebar.css";
 
 interface DmEntryProps {
@@ -22,7 +23,10 @@ function DmEntry({ channel, selected, onClick, currentUserId }: DmEntryProps) {
   const { isOnline } = usePresence();
   const { unread } = useUnread();
   const others = channel.participants.filter((p) => p.id !== currentUserId);
-  const displayName = channel.name ?? (others.map((p) => p.display_name || p.name).join(", ") || "DM");
+  // Priorité aux participants filtrés — channel.name est fixe côté serveur et ne dépend pas de l'observateur
+  const displayName = others.length > 0
+    ? others.map((p) => p.display_name || p.name).join(", ")
+    : (channel.name ?? "DM");
   const initials = displayName.replace(/[^A-Za-z0-9À-ÿ]/g, " ").trim().split(" ")
     .map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
   const showDot = others.length === 1 && isOnline(others[0].id);
@@ -94,11 +98,6 @@ export default function PrivateMessageSideBar() {
     };
   }, [user]);
 
-  const userInitials = user
-    ? (user.display_name || user.name).replace(/[^A-Za-z0-9À-ÿ]/g, " ").trim()
-        .split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()
-    : "?";
-
   return (
     <div className="friend-sidebar" style={{ width, minWidth: width, maxWidth: width }}>
       <div className="resize-handle" onMouseDown={onMouseDown} />
@@ -135,18 +134,7 @@ export default function PrivateMessageSideBar() {
         ))}
       </div>
 
-      {user && (
-        <div className="userbar">
-          <div className="avatar avatar--sm">{userInitials}</div>
-          <div className="userbar-meta">
-            <div className="userbar-name">{user.display_name || user.name}</div>
-            <div className="userbar-tag">En ligne</div>
-          </div>
-          <button className="icon-btn" title="Micro"><Mic size={15} /></button>
-          <button className="icon-btn" title="Casque"><Headphones size={15} /></button>
-          <button className="icon-btn" title="Paramètres"><Settings size={15} /></button>
-        </div>
-      )}
+      <UserBar />
 
       {showModal && (
         <CreateDmModal

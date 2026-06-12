@@ -31,9 +31,9 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(useParams).mockReturnValue({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   vi.mocked(useLocation).mockReturnValue({ state: { channel: mockChannel }, pathname: `/guilds/${GUILD_ID}/channels/${CHANNEL_ID}`, search: "", hash: "", key: "default" });
-  vi.mocked(useAuth).mockReturnValue({ user: mockUser, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+  vi.mocked(useAuth).mockReturnValue({ user: mockUser, isLoading: false, wsStatus: "connected" as const, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
   vi.mocked(useGuild).mockReturnValue({ selectedGuild: { id: GUILD_ID, name: "Mon Serveur", icon: "", owner: "user:me", created_at: "2024-01-01T00:00:00Z" }, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-  vi.mocked(useUnread).mockReturnValue({ unread: {}, dmUnread: false, guildUnread: new Set(), markRead: vi.fn(), setActiveChannel: vi.fn(), registerChannel: vi.fn(), lockedChannels: new Set(), setChannelLocked: vi.fn() });
+  vi.mocked(useUnread).mockReturnValue({ unread: {}, dmUnread: false, guildUnread: new Set(), markRead: vi.fn(), setActiveChannel: vi.fn(), registerChannel: vi.fn(), lockedChannels: new Set(), setChannelLocked: vi.fn(), pendingFriendRequests: 0, setPendingFriendRequests: vi.fn(), registerFriendPendingRefresh: vi.fn(), registerFriendListRefresh: vi.fn() } as ReturnType<typeof useUnread>);
   vi.mocked(listen).mockResolvedValue(() => {});
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === "get_channel_messages") return mockMessages;
@@ -51,7 +51,7 @@ describe("GuildChannelPage", () => {
 
   it("charge et affiche l'historique des messages", async () => {
     render(<GuildChannelPage />);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_channel_messages", { channelId: CHANNEL_ID }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_channel_messages", { channelId: CHANNEL_ID, limit: 50, before: null }));
     expect(await screen.findByText("Salut !")).toBeInTheDocument();
     expect(screen.getByText("Bonjour !")).toBeInTheDocument();
   });

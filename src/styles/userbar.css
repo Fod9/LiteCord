@@ -1,0 +1,35 @@
+/* User bar — toujours visible en bas, jamais scrollé */
+.userbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-base);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.userbar-meta {
+  flex: 1;
+  overflow: hidden;
+}
+
+.userbar-name {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.userbar-tag {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.userbar-tag--ws-connected   { color: #3ba55d; }
+.userbar-tag--ws-connecting  { color: var(--text-muted); }
+.userbar-tag--ws-reconnecting { color: #faa61a; }
+.userbar-tag--ws-error       { color: #ed4245; }

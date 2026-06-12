@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("../../../context/GuildContext", () => ({ useGuild: vi.fn() }));
 vi.mock("../../../context/AuthContext", () => ({ useAuth: vi.fn() }));
 vi.mock("../../../context/UnreadContext", () => ({ useUnread: vi.fn() }));
+vi.mock("../../../context/VoiceContext", () => ({ useVoice: vi.fn() }));
 vi.mock("react-router", () => ({ useNavigate: vi.fn(), useParams: vi.fn() }));
 
 import { invoke } from "@tauri-apps/api/core";
@@ -15,6 +16,7 @@ import { useGuild } from "../../../context/GuildContext";
 import { useAuth } from "../../../context/AuthContext";
 import { useUnread } from "../../../context/UnreadContext";
 import { useNavigate, useParams } from "react-router";
+import { useVoice } from "../../../context/VoiceContext";
 import ChannelsSideBar from "../ChannelsSideBar";
 import type { Guild } from "../../../services/guilds";
 
@@ -32,23 +34,61 @@ const mockChannels = [
   { id: "channel:3", guild: "guild:1", name: "vocal-général", channel_type: "Voice", category: "Vocal", created_at: "2024-01-01T00:00:00Z" },
 ];
 
+const SOCLE = ["view_channels", "send_messages", "attach_files", "create_invite", "connect", "speak"];
+
 const mockNavigate = vi.fn();
 const mockOwner = { id: "user:me", name: "me", display_name: "Me", profile_picture: "" };
 const mockMember = { id: "user:other", name: "other", display_name: "Other", profile_picture: "" };
+
+/** Mock d'invoke par commande ; myPermissions = retour serveur de get_my_guild_member. */
+function mockInvokeByCommand(myPermissions: string[] = SOCLE, overrides: Record<string, unknown> = {}) {
+  vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+    if (cmd in overrides) return overrides[cmd];
+    if (cmd === "get_guild_channels") return mockChannels;
+    if (cmd === "get_my_guild_member") {
+      return {
+        member: { id: "member_of:x", user: mockMember, roles: [], nickname: null, joined_at: "2024-01-01T00:00:00Z" },
+        permissions: myPermissions,
+      };
+    }
+    return undefined;
+  });
+}
+
+function mockAuthAs(user: typeof mockOwner) {
+  vi.mocked(useAuth).mockReturnValue({ user, isLoading: false, wsStatus: "connected" as const, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+}
+
+const mockVoice: ReturnType<typeof useVoice> = {
+  currentChannelId: null,
+  currentGuildId: null,
+  voiceStates: {},
+  isMuted: false,
+  isSharing: false,
+  screenQuality: 1080,
+  screenFps: 30,
+  setScreenQuality: vi.fn(),
+  setScreenFps: vi.fn(),
+  join: vi.fn(),
+  leave: vi.fn(),
+  toggleMute: vi.fn(),
+  toggleScreen: vi.fn(),
+};
 
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(listen).mockResolvedValue(() => {});
   vi.mocked(useNavigate).mockReturnValue(mockNavigate);
   vi.mocked(useParams).mockReturnValue({});
-  vi.mocked(invoke).mockResolvedValue(mockChannels);
-  vi.mocked(useUnread).mockReturnValue({ unread: {}, dmUnread: false, guildUnread: new Set(), markRead: vi.fn(), setActiveChannel: vi.fn(), registerChannel: vi.fn(), lockedChannels: new Set(), setChannelLocked: vi.fn() });
+  vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
+  vi.mocked(useUnread).mockReturnValue({ unread: {}, dmUnread: false, guildUnread: new Set(), markRead: vi.fn(), setActiveChannel: vi.fn(), registerChannel: vi.fn(), lockedChannels: new Set(), setChannelLocked: vi.fn(), pendingFriendRequests: 0, setPendingFriendRequests: vi.fn(), registerFriendPendingRefresh: vi.fn(), registerFriendListRefresh: vi.fn() } as ReturnType<typeof useUnread>);
+  vi.mocked(useVoice).mockReturnValue(mockVoice);
+  mockInvokeByCommand();
 });
 
 describe("ChannelsSideBar", () => {
   it("charge et affiche les channels du guild sélectionné", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockMember, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+    mockAuthAs(mockMember);
 
     render(<ChannelsSideBar />);
 
@@ -58,16 +98,14 @@ describe("ChannelsSideBar", () => {
   });
 
   it("affiche le nom du guild en en-tête", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockMember, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+    mockAuthAs(mockMember);
 
     render(<ChannelsSideBar />);
     expect(await screen.findByText("Mon Serveur")).toBeInTheDocument();
   });
 
   it("affiche les channels Voice sous leur catégorie", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockMember, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+    mockAuthAs(mockMember);
 
     render(<ChannelsSideBar />);
 
@@ -76,8 +114,7 @@ describe("ChannelsSideBar", () => {
   });
 
   it("clic sur un channel Text navigue vers la bonne route", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockMember, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+    mockAuthAs(mockMember);
 
     render(<ChannelsSideBar />);
     await userEvent.click(await screen.findByText("général"));
@@ -89,37 +126,46 @@ describe("ChannelsSideBar", () => {
   });
 
   it("owner voit le bouton créer un channel", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockOwner, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+    mockAuthAs(mockOwner);
+    mockInvokeByCommand([...SOCLE, "manage_channels"]);
 
     render(<ChannelsSideBar />);
     await screen.findByText("général");
 
-    expect(screen.getByLabelText("Créer un channel")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Créer un channel")).toBeInTheDocument();
   });
 
-  it("non-owner ne voit pas le bouton créer un channel", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockMember, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+  it("membre sans permission manage_channels ne voit pas le bouton créer un channel", async () => {
+    mockAuthAs(mockMember);
 
     render(<ChannelsSideBar />);
     await screen.findByText("général");
+    // attend la résolution des permissions avant d'affirmer l'absence
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_my_guild_member", { guildId: "guild:1" }));
 
     expect(screen.queryByLabelText("Créer un channel")).not.toBeInTheDocument();
   });
 
-  it("owner peut créer un channel Text", async () => {
-    const newChannel = { id: "channel:99", guild: "guild:1", name: "nouveau", channel_type: "Text", category: null, created_at: "2024-01-01T00:00:00Z" };
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockOwner, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
-    vi.mocked(invoke)
-      .mockResolvedValueOnce(mockChannels)
-      .mockResolvedValueOnce(newChannel);
+  it("membre avec la permission manage_channels voit les boutons créer et supprimer", async () => {
+    mockAuthAs(mockMember);
+    mockInvokeByCommand([...SOCLE, "manage_channels"]);
 
     render(<ChannelsSideBar />);
     await screen.findByText("général");
 
-    await userEvent.click(screen.getByLabelText("Créer un channel"));
+    expect(await screen.findByLabelText("Créer un channel")).toBeInTheDocument();
+    expect(screen.getByLabelText("Supprimer général")).toBeInTheDocument();
+  });
+
+  it("owner peut créer un channel Text", async () => {
+    const newChannel = { id: "channel:99", guild: "guild:1", name: "nouveau", channel_type: "Text", category: null, created_at: "2024-01-01T00:00:00Z" };
+    mockAuthAs(mockOwner);
+    mockInvokeByCommand([...SOCLE, "manage_channels"], { create_guild_channel: newChannel });
+
+    render(<ChannelsSideBar />);
+    await screen.findByText("général");
+
+    await userEvent.click(await screen.findByLabelText("Créer un channel"));
     await userEvent.type(screen.getByPlaceholderText(/nom du channel/i), "nouveau");
     await userEvent.click(screen.getByRole("button", { name: /créer le channel/i }));
 
@@ -132,16 +178,13 @@ describe("ChannelsSideBar", () => {
   });
 
   it("owner peut supprimer un channel", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockOwner, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
-    vi.mocked(invoke)
-      .mockResolvedValueOnce(mockChannels)
-      .mockResolvedValueOnce(undefined);
+    mockAuthAs(mockOwner);
+    mockInvokeByCommand([...SOCLE, "manage_channels"]);
 
     render(<ChannelsSideBar />);
     await screen.findByText("général");
 
-    await userEvent.click(screen.getByLabelText("Supprimer général"));
+    await userEvent.click(await screen.findByLabelText("Supprimer général"));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("delete_guild_channel", {
@@ -151,9 +194,27 @@ describe("ChannelsSideBar", () => {
     expect(screen.queryByText("général")).not.toBeInTheDocument();
   });
 
+  it("affiche le profil utilisateur en bas de la sidebar", async () => {
+    mockAuthAs(mockMember);
+
+    render(<ChannelsSideBar />);
+    await screen.findByText("général");
+
+    expect(screen.getByText("Other")).toBeInTheDocument();
+    expect(screen.getByText("En ligne")).toBeInTheDocument();
+  });
+
   it("owner voit le bouton paramètres", async () => {
-    vi.mocked(useGuild).mockReturnValue({ selectedGuild: mockGuild, selectGuild: vi.fn(), lastVisited: {}, setLastVisited: vi.fn() });
-    vi.mocked(useAuth).mockReturnValue({ user: mockOwner, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+    mockAuthAs(mockOwner);
+
+    render(<ChannelsSideBar />);
+    await screen.findByText("général");
+
+    expect(screen.getByLabelText("Paramètres du serveur")).toBeInTheDocument();
+  });
+
+  it("un membre voit aussi le bouton paramètres (onglets filtrés dans le modal)", async () => {
+    mockAuthAs(mockMember);
 
     render(<ChannelsSideBar />);
     await screen.findByText("général");

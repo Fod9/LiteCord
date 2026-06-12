@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useParams, useLocation } from "react-router";
 import { listen } from "@tauri-apps/api/event";
-import { Send, Paperclip, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { Send, Paperclip, X, ArrowUpDown } from "lucide-react";
+import { AttachmentView } from "../components/globals/AttachmentView";
 import { getChannelMessages, uploadAttachment, type Message, type DmChannel, type Attachment } from "../services/channels";
+import { initP2P, sendFileP2P, cancelP2P, P2P_THRESHOLD, type P2PCallbacks } from "../services/p2p";
 import { sendWsMessage } from "../services/ws";
 import { useAuth } from "../context/AuthContext";
 import { useUnread } from "../context/UnreadContext";
@@ -22,30 +26,29 @@ function formatTime(iso: string) {
   }
 }
 
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"]);
-const AUDIO_EXTS = new Set(["mp3", "ogg", "wav", "flac", "m4a", "opus"]);
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} Go`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} Ko`;
+  return `${bytes} o`;
+}
 
-function AttachmentView({ att }: { att: Attachment }) {
-  const ext = att.filename.split(".").pop()?.toLowerCase() ?? "";
-  if (IMAGE_EXTS.has(ext)) {
-    return <img src={att.url} alt={att.filename} className="att-image" />;
-  }
-  if (AUDIO_EXTS.has(ext)) {
-    return (
-      <div className="att-audio">
-        <span className="att-filename">{att.filename}</span>
-        <audio controls src={att.url} />
-      </div>
-    );
-  }
-  const kb = (att.size / 1024).toFixed(1);
-  return (
-    <a href={att.url} download={att.filename} className="att-file">
-      <Paperclip size={14} />
-      <span>{att.filename}</span>
-      <span className="att-size">{kb} KB</span>
-    </a>
-  );
+interface PendingFile {
+  name: string;
+  path: string;
+  contentType: string;
+  size: number;
+  p2p: boolean; // true if >200MB
+}
+
+interface P2PEntry {
+  filename: string;
+  fileSize: number;
+  bytes: number;
+  direction: "send" | "receive";
+  fromUserId?: string;
+  done: boolean;
+  error?: string;
 }
 
 export default function DMPage() {
@@ -56,44 +59,139 @@ export default function DMPage() {
   const { markRead, setActiveChannel, lockedChannels } = useUnread();
   const isLocked = channelId ? lockedChannels.has(channelId) : false;
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [p2pMap, setP2PMap] = useState<Map<string, P2PEntry>>(new Map());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const prependScrollRef = useRef<number | null>(null);
+  const autoScrollRef = useRef(true);
+
+  const otherParticipants = channel?.participants.filter((p) => p.id !== user?.id) ?? [];
+  const channelDisplayName = otherParticipants.length > 0
+    ? otherParticipants.map((p) => p.display_name || p.name).join(", ")
+    : (channel?.name ?? "DM");
+  const channelInitials = getInitials(channelDisplayName);
+  // P2P only for 1-on-1 DMs
+  const otherUserId = otherParticipants.length === 1 ? otherParticipants[0].id : null;
+
+  function updateP2P(transferId: string, patch: Partial<P2PEntry>) {
+    setP2PMap((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(transferId);
+      if (cur) next.set(transferId, { ...cur, ...patch });
+      return next;
+    });
+  }
+
+  // Register P2P incoming handler whenever otherUserId changes
+  useEffect(() => {
+    if (!otherUserId) return;
+
+    const cleanup = initP2P((transferId, filename, fileSize, fromUserId) => {
+      // Only handle signals from the person we're chatting with
+      if (fromUserId !== otherUserId) {
+        return { onProgress: () => {}, onDone: () => {}, onError: () => {} };
+      }
+
+      setP2PMap((prev) => {
+        const next = new Map(prev);
+        next.set(transferId, { filename, fileSize, bytes: 0, direction: "receive", fromUserId, done: false });
+        return next;
+      });
+
+      const callbacks: P2PCallbacks = {
+        onProgress: (bytes) => updateP2P(transferId, { bytes }),
+        onDone: () => updateP2P(transferId, { done: true }),
+        onError: (error) => updateP2P(transferId, { error }),
+      };
+      return callbacks;
+    });
+
+    return cleanup;
+  }, [otherUserId]);
 
   async function doSend(content: string) {
     if (!channelId) return;
+
+    // Separate CDN files from P2P files
+    const cdnFiles = pendingFiles.filter((f) => !f.p2p);
+    const p2pFiles = pendingFiles.filter((f) => f.p2p);
+    setPendingFiles([]);
+
+    // Upload CDN files
     let attachments: Attachment[] | undefined;
-    if (pendingFiles.length > 0) {
+    if (cdnFiles.length > 0) {
       setUploading(true);
       try {
         attachments = await Promise.all(
-          pendingFiles.map(async (file) => {
-            const buf = await file.arrayBuffer();
-            return uploadAttachment(file.name, file.type || "application/octet-stream", Array.from(new Uint8Array(buf)));
-          }),
+          cdnFiles.map((f) => uploadAttachment(f.name, f.contentType, f.path)),
         );
       } finally {
         setUploading(false);
       }
-      setPendingFiles([]);
     }
-    await sendWsMessage(channelId, content, attachments).catch((err) => {
-      setSendError(String(err));
-      setTimeout(() => setSendError(null), 5000);
-    });
+
+    // Send text + CDN attachments via WS
+    if (content || attachments) {
+      const err = await sendWsMessage(channelId, content, attachments).catch((e) => e);
+      if (err) {
+        setSendError(String(err));
+        setTimeout(() => setSendError(null), 5000);
+      } else if (attachments) {
+        // Avec pièces jointes le serveur ne renvoie pas new_message à l'expéditeur
+        autoScrollRef.current = true;
+        getChannelMessages(channelId, { limit: 50 }).then((msgs) => {
+          setMessages(msgs);
+          setHasMore(msgs.length === 50);
+        }).catch(console.error);
+      }
+    }
+
+    // Start P2P transfers
+    if (p2pFiles.length > 0 && otherUserId) {
+      for (const f of p2pFiles) {
+        const transferId = crypto.randomUUID();
+        setP2PMap((prev) => {
+          const next = new Map(prev);
+          next.set(transferId, { filename: f.name, fileSize: f.size, bytes: 0, direction: "send", done: false });
+          return next;
+        });
+
+        sendFileP2P(otherUserId, f.path, f.name, f.size, {
+          onProgress: (bytes) => updateP2P(transferId, { bytes }),
+          onDone: () => updateP2P(transferId, { done: true }),
+          onError: (error) => updateP2P(transferId, { error }),
+        }).catch((e) => updateP2P(transferId, { error: String(e) }));
+      }
+    }
+  }
+
+  async function loadOlder() {
+    if (!channelId || !hasMore || loadingMore || messages.length === 0) return;
+    setLoadingMore(true);
+    try {
+      const older = await getChannelMessages(channelId, { limit: 50, before: messages[0].id });
+      if (older.length === 0) {
+        setHasMore(false);
+      } else {
+        prependScrollRef.current = scrollRef.current?.scrollHeight ?? null;
+        setMessages((prev) => [...older, ...prev]);
+        if (older.length < 50) setHasMore(false);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   const { ref: inputRef, resize: resizeInput, onKeyDown: chatKeyDown } = useChatInput(doSend);
-
-  const otherParticipants = channel?.participants.filter((p) => p.id !== user?.id) ?? [];
-  const channelDisplayName =
-    channel?.name ??
-    (otherParticipants.map((p) => p.display_name || p.name).join(", ") || "DM");
-
-  const channelInitials = getInitials(channelDisplayName);
 
   function resolveAuthor(author: { id: string; display_name: string; name: string }): string {
     if (user && author.id === user.id) return user.display_name || user.name;
@@ -112,10 +210,18 @@ export default function DMPage() {
     let cancelled = false;
     let unlistenFn: (() => void) | undefined;
 
-    getChannelMessages(channelId).then(setMessages).catch(console.error);
+    setHasMore(false);
+    autoScrollRef.current = true;
+    getChannelMessages(channelId, { limit: 50 }).then((msgs) => {
+      setMessages(msgs);
+      setHasMore(msgs.length === 50);
+    }).catch(console.error);
 
     listen<Message>("new-message", (event) => {
       if (event.payload.channel === channelId) {
+        const scroll = scrollRef.current;
+        const nearBottom = !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 150;
+        autoScrollRef.current = nearBottom;
         setMessages((prev) => [...prev, event.payload]);
       }
     }).then((fn) => {
@@ -123,7 +229,7 @@ export default function DMPage() {
       else unlistenFn = fn;
     });
 
-    const unlistenErr = listen<string>("ws-error", (event) => {
+    const unlistenErr = listen<string>("server-error", (event) => {
       setSendError(event.payload);
       setTimeout(() => setSendError(null), 5000);
     });
@@ -136,8 +242,39 @@ export default function DMPage() {
   }, [channelId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView?.({ behavior: "smooth" });
+    if (prependScrollRef.current !== null && scrollRef.current) {
+      scrollRef.current.scrollTop += scrollRef.current.scrollHeight - prependScrollRef.current;
+      prependScrollRef.current = null;
+    } else if (autoScrollRef.current && messages.length > 0) {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
   }, [messages]);
+
+  // Re-scroll when images/content load and expand the height
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const ro = new ResizeObserver(() => {
+      if (autoScrollRef.current && scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const onScroll = () => {
+      if (container.scrollTop < 100 && hasMore && !loadingMore) loadOlder();
+      const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+      if (!atBottom && prependScrollRef.current === null) autoScrollRef.current = false;
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, [hasMore, loadingMore]);
 
   function handleSendClick() {
     const el = inputRef.current;
@@ -147,11 +284,27 @@ export default function DMPage() {
     if (el) { el.value = ""; resizeInput(); }
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []);
-    if (files.length > 0) setPendingFiles((prev) => [...prev, ...files]);
-    e.target.value = "";
+  async function handleAttach() {
+    const result = await open({ multiple: true });
+    if (!result) return;
+    const paths = Array.isArray(result) ? result : [result];
+    const files = await Promise.all(paths.map(async (p) => {
+      const name = p.split(/[/\\]/).pop() ?? p;
+      const ext = name.split(".").pop()?.toLowerCase() ?? "";
+      const contentTypeMap: Record<string, string> = {
+        png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+        webp: "image/webp", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg",
+        pdf: "application/pdf", txt: "text/plain", zip: "application/zip",
+      };
+      const contentType = contentTypeMap[ext] ?? "application/octet-stream";
+      const size: number = await invoke<number>("get_file_size", { path: p }).catch(() => 0);
+      const p2p = size > P2P_THRESHOLD;
+      return { name, path: p, contentType, size, p2p };
+    }));
+    setPendingFiles((prev) => [...prev, ...files]);
   }
+
+  const p2pEntries = Array.from(p2pMap.entries());
 
   return (
     <div className="dm-page">
@@ -161,7 +314,9 @@ export default function DMPage() {
         <div className="dm-topbar-spacer" />
       </div>
 
-      <div className="dm-scroll">
+      <div className="dm-scroll" ref={scrollRef}>
+        {loadingMore && <div className="dm-load-more">Chargement…</div>}
+        <div ref={contentRef}>
         <div className="dm-intro">
           <div className="avatar avatar--lg" style={{ marginBottom: 12 }}>{channelInitials}</div>
           <h2>{channelDisplayName}</h2>
@@ -194,7 +349,48 @@ export default function DMPage() {
             );
           })
         )}
+
+        {/* P2P transfer progress indicators */}
+        {p2pEntries.map(([id, t]) => (
+          <div key={id} className="p2p-transfer">
+            <ArrowUpDown size={14} className={t.direction === "send" ? "p2p-icon--send" : "p2p-icon--recv"} />
+            <div className="p2p-info">
+              <div className="p2p-name">{t.filename}</div>
+              {t.error ? (
+                <div className="p2p-error">{t.error}</div>
+              ) : t.done ? (
+                <div className="p2p-done">
+                  {t.direction === "receive" ? "Enregistré dans Téléchargements" : "Envoyé"} — {formatSize(t.fileSize)}
+                </div>
+              ) : (
+                <>
+                  <div className="p2p-bar">
+                    <div
+                      className="p2p-bar-fill"
+                      style={{ width: `${t.fileSize > 0 ? Math.round((t.bytes / t.fileSize) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <div className="p2p-stats">
+                    {formatSize(t.bytes)} / {formatSize(t.fileSize)}
+                  </div>
+                </>
+              )}
+            </div>
+            {(t.done || t.error) && (
+              <button className="p2p-dismiss" onClick={() => setP2PMap((p) => { const n = new Map(p); n.delete(id); return n; })}>
+                <X size={12} />
+              </button>
+            )}
+            {!t.done && !t.error && t.direction === "send" && (
+              <button className="p2p-cancel" onClick={() => { cancelP2P(id); updateP2P(id, { error: "Annulé" }); }}>
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        ))}
+
         <div ref={bottomRef} />
+        </div>
       </div>
 
       <div className="dm-input-bar">
@@ -208,16 +404,17 @@ export default function DMPage() {
             {pendingFiles.length > 0 && (
               <div className="att-chips">
                 {pendingFiles.map((f, i) => (
-                  <div key={i} className="att-chip">
+                  <div key={i} className={`att-chip${f.p2p ? " att-chip--p2p" : ""}`}>
+                    {f.p2p && <ArrowUpDown size={10} />}
                     <span className="att-chip-name">{f.name}</span>
+                    {f.p2p && <span className="att-chip-size">{formatSize(f.size)} · P2P</span>}
                     <button className="att-chip-remove" onClick={() => setPendingFiles((p) => p.filter((_, j) => j !== i))}><X size={12} /></button>
                   </div>
                 ))}
               </div>
             )}
             <div className={`dm-input-wrap ${inputFocused ? "focused" : ""}`}>
-              <input type="file" multiple ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
-              <button className="dm-attach-btn" onClick={() => fileInputRef.current?.click()} title="Joindre un fichier">
+              <button className="dm-attach-btn" onClick={handleAttach} title="Joindre un fichier">
                 <Paperclip size={18} />
               </button>
               <textarea

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 
 interface PresenceContextValue {
   isOnline: (userId: string) => boolean;
@@ -17,6 +18,11 @@ export function PresenceProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     const unlisteners: Array<() => void> = [];
+
+    // Rattrape le snapshot initial si l'event WS a été émis avant que le listener soit enregistré
+    invoke<string[]>("get_friends_online")
+      .then((ids) => { if (!cancelled) setOnlineIds(new Set(ids)); })
+      .catch(() => {});
 
     listen<string[]>("friends-online-init", (e) => {
       setOnlineIds(new Set(e.payload));

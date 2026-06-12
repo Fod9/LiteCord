@@ -61,6 +61,10 @@ function mockUnread(lockedChannels: Set<string> = new Set()) {
     registerChannel: vi.fn(),
     lockedChannels,
     setChannelLocked: vi.fn(),
+    pendingFriendRequests: 0,
+    setPendingFriendRequests: vi.fn(),
+    registerFriendPendingRefresh: vi.fn(),
+    registerFriendListRefresh: vi.fn(),
   } as ReturnType<typeof useUnread>);
 }
 
@@ -68,7 +72,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(useParams).mockReturnValue({ channelId: CHANNEL_ID });
   vi.mocked(useLocation).mockReturnValue({ state: { channel: mockChannel }, pathname: `/channels/${CHANNEL_ID}`, search: "", hash: "", key: "default" });
-  vi.mocked(useAuth).mockReturnValue({ user: mockUser, isLoading: false, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
+  vi.mocked(useAuth).mockReturnValue({ user: mockUser, isLoading: false, wsStatus: "connected" as const, login: vi.fn(), signup: vi.fn(), logout: vi.fn() });
   vi.mocked(listen).mockResolvedValue(() => {});
   mockUnread();
 });
@@ -81,7 +85,7 @@ describe("DMPage", () => {
 
     await waitFor(() => expect(screen.getByText("Bonjour !")).toBeInTheDocument());
     expect(screen.getByText("Salut !")).toBeInTheDocument();
-    expect(invoke).toHaveBeenCalledWith("get_channel_messages", { channelId: CHANNEL_ID });
+    expect(invoke).toHaveBeenCalledWith("get_channel_messages", { channelId: CHANNEL_ID, limit: 50, before: null });
   });
 
   it("affiche le display_name de l'utilisateur courant et le nom du channel pour l'autre", async () => {
